@@ -279,9 +279,39 @@ async function find(cap, type) {
 
 async function shareMemory(content) {
   const id = crypto.randomBytes(4).toString('hex');
-  await redisCmd('RPUSH', 'shared:memories', JSON.stringify({ id, agent: AGENT_NAME, content, timestamp: new Date().toISOString() }));
+  
+  // Check if content is a file path
+  let fileInfo = null;
+  if (content.startsWith('/') || content.startsWith('./') || content.startsWith('~')) {
+    const path = content.startsWith('~') ? require('os').homedir() + content.slice(1) : content;
+    try {
+      const stats = fs.statSync(path);
+      if (stats.isFile()) {
+        fileInfo = {
+          path: path,
+          name: require('path').basename(path),
+          size: stats.size,
+          isFile: true
+        };
+        // For now, just reference the file path (actual upload can be added later)
+        content = '[文件] ' + fileInfo.name + ' (' + Math.round(fileInfo.size/1024) + 'KB)';
+      }
+    } catch(e) {
+      // File doesn't exist, treat as normal text
+    }
+  }
+  
+  const memory = { 
+    id, 
+    agent: AGENT_NAME, 
+    content, 
+    timestamp: new Date().toISOString() 
+  };
+  if (fileInfo) memory.file = fileInfo;
+  
+  await redisCmd('RPUSH', 'shared:memories', JSON.stringify(memory));
   await logEvent('memory_shared', { id, content: content.substring(0, 30) });
-  return '✅ Memory shared';
+  return fileInfo ? '✅ 文件记忆共享: ' + fileInfo.name : '✅ Memory shared';
 }
 
 async function memories(limit) {
