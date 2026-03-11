@@ -196,22 +196,43 @@ async function processTask(task, taskData, redisInstance, sendNotificationFn) {
   
   console.log(`[Task] Type detected: ${taskType}, Allowed: ${permission.allowed}`);
   
+  // Import Feishu notifier
+  const { sendTaskConfirmation, waitForConfirmation } = await import('./feishu-notifier.js');
+  
   // If not allowed and requires confirmation
   if (!permission.allowed && permission.requiresConfirm) {
-    // Send notification
-    const notification = await sendFeishuNotification('new_task', {
-      from: taskData.from,
-      task: task.substring(0, 100),
-      task_type: taskType,
-      priority: taskData.priority || 'normal'
+    // Send Feishu confirmation request
+    const confirmId = await sendTaskConfirmation({
+      ...taskData,
+      taskType
     });
     
-    if (sendNotificationFn) {
-      await sendNotificationFn(notification);
+    // Wait for user confirmation via Redis
+    const confirmResult = await waitForConfirmation(confirmId, (config.CONFIRM_TIMEOUT || 5) * 60 * 1000);
+    
+    if (!confirmResult.confirmed) {
+      return { 
+        success: false, 
+        reason: 'not_confirmed',
+        message: `Task not confirmed: ${confirmResult.reason}` 
+      };
     }
     
-    // Wait for confirmation
-    const confirmResult = await waitForConfirmation(taskData.id, config.CONFIRM_TIMEOUT || 300);
+    // If user chose to add to whitelist
+    if (confirmResult.addToWhitelist) {
+      addToWhitelist(taskType, `${taskType}类任务`);
+      console.log(`[Task] Added ${taskType} to whitelist`);
+    }
+  }
+  
+  // If blacklisted
+  if (!permission.allowed && !permission.requiresConfirm) {
+    return { 
+      success: false, 
+      reason: 'blacklisted',
+      message: `Task type '${taskType}' is blacklisted: ${permission.reason}` 
+    };
+  }
     
     if (!confirmResult.confirmed) {
       return { 
