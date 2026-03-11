@@ -58,6 +58,70 @@ async function detectCompute() {
   return caps;
 }
 
+// Get real-time system metrics
+async function getSystemMetrics() {
+  const metrics = {
+    timestamp: new Date().toISOString(),
+    cpuUsage: null,
+    loadAvg: null,
+    memoryTotal: null,
+    memoryUsed: null,
+    memoryFree: null,
+    processes: null,
+    availability: 'unknown'
+  };
+  
+  try {
+    // CPU usage (sum of all processes %CPU)
+    const cpuOutput = require('child_process').execSync("ps -A -o %cpu 2>/dev/null | awk '{s+=$1} END {printf \"%.1f\", s}'").toString().trim();
+    metrics.cpuUsage = parseFloat(cpuOutput) || 0;
+  } catch (e) {}
+  
+  try {
+    // Load average (1 min)
+    const loadOutput = require('child_process').execSync("uptime | awk -F'load averages:' '{print $2}' | awk '{print $1}' | tr -d ','").toString().trim();
+    metrics.loadAvg = parseFloat(loadOutput) || 0;
+  } catch (e) {}
+  
+  try {
+    // Memory info (in MB)
+    const memTotal = Math.round(os.totalmem() / 1024 / 1024);
+    metrics.memoryTotal = memTotal;
+    
+    // Try macOS memory_pressure
+    try {
+      const memPressure = require('child_process').execSync("memory_pressure 2>/dev/null | grep 'System-wide memory free percentage' | awk '{print $5}' | tr -d '%'").toString().trim();
+      const freePercent = parseFloat(memPressure) || 50;
+      metrics.memoryFree = Math.round(memTotal * freePercent / 100);
+      metrics.memoryUsed = memTotal - metrics.memoryFree;
+    } catch {
+      // Fallback to os.freemem()
+      metrics.memoryFree = Math.round(os.freemem() / 1024 / 1024);
+      metrics.memoryUsed = memTotal - metrics.memoryFree;
+    }
+  } catch (e) {}
+  
+  try {
+    // Process count
+    const procOutput = require('child_process').execSync("ps -e | wc -l | tr -d ' '").toString().trim();
+    metrics.processes = parseInt(procOutput) || 0;
+  } catch (e) {}
+  
+  // Calculate availability level based on load
+  const load = metrics.loadAvg || 0;
+  if (load < 10) {
+    metrics.availability = '空闲';
+  } else if (load < 20) {
+    metrics.availability = '轻载';
+  } else if (load < 40) {
+    metrics.availability = '中载';
+  } else {
+    metrics.availability = '高载';
+  }
+  
+  return metrics;
+}
+
 function loadRoleFiles(dir) {
   const files = ['SOUL.md', 'AGENTS.md', 'USER.md', 'IDENTITY.md', 'TOOLS.md'];
   const result = {};
@@ -87,6 +151,7 @@ async function register(nets, computes, roles, force) {
   const compCaps = computes ? computes.split(',').map(x => x.trim()) : await detectCompute();
   const roleCaps = roles ? roles.split(',').map(x => x.trim()) : detectRole();
   const files = Object.keys(loadRoleFiles());
+  const metrics = await getSystemMetrics();
   
   let parsed = {};
   if (existing && !force) {
@@ -105,7 +170,8 @@ async function register(nets, computes, roles, force) {
     personaFiles: files,
     hostname: os.hostname(),
     platform: os.platform(),
-    eventCount: (parsed.eventCount || 0) + 1
+    eventCount: (parsed.eventCount || 0) + 1,
+    metrics: metrics
   });
   
   await redisCmd('SETEX', 'agent:' + AGENT_NAME, HEARTBEAT_INTERVAL * 3, data);
@@ -126,6 +192,7 @@ async function heartbeat() {
     d.lastHeartbeat = new Date().toISOString();
     d.status = 'online';
     d.eventCount = (d.eventCount || 0) + 1;
+    d.metrics = await getSystemMetrics();  // Update real-time metrics
     await redisCmd('SETEX', 'agent:' + AGENT_NAME, HEARTBEAT_INTERVAL * 3, JSON.stringify(d));
   } else {
     await register();
