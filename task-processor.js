@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
@@ -241,11 +241,62 @@ async function processTask(task, taskData, redisInstance, sendNotificationFn) {
     };
   }
   
-  // Execute task
+// Execute task via subagent (executor.js)
   const executeFn = async (t) => {
-    // This would call the actual task execution logic
-    // For now, placeholder
-    return `[Executed] ${t}`;
+    return new Promise((resolve, reject) => {
+      const executorPath = path.join(__dirname, 'executor.js');
+      const env = {
+        ...process.env,
+        TASK_DATA: JSON.stringify(taskData),
+        REDIS_HOST,
+        REDIS_PORT,
+        REDIS_PASSWORD,
+        AGENT_NAME
+      };
+      
+      console.log(`[Task] Spawning subagent for task ${taskData.id}`);
+      
+      const child = spawn('node', [executorPath], {
+        env,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      
+      let stdout = '';
+      let stderr = '';
+      
+      child.stdout.on('data', (data) => {
+        stdout += data.toString();
+        console.log(`[Subagent ${taskData.id}]`, data.toString().trim());
+      });
+      
+      child.stderr.on('data', (data) => {
+        stderr += data.toString();
+        console.error(`[Subagent ${taskData.id} Error]`, data.toString().trim());
+      });
+      
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve({
+            result: `Task executed by subagent. See Redis for details.`,
+            stdout: stdout.substring(0, 500)
+          });
+        } else {
+          reject(new Error(`Subagent exited with code ${code}: ${stderr}`));
+        }
+      });
+      
+      child.on('error', (err) => {
+        reject(new Error(`Failed to spawn subagent: ${err.message}`));
+      });
+      
+      setTimeout(() => {
+        resolve({
+          result: `Task ${taskData.id} started in subagent. Monitoring via Redis...`,
+          subagentPid: child.pid
+        });
+      }, 1000);
+    });
   };
   
   const result = await executeTaskWithRetry(task, config, executeFn);
