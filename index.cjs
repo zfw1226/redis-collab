@@ -403,11 +403,92 @@ const skills = {
   'redis-status': { description: 'Get my status', handler: async function() { const d = await redisCmd('GET', 'agent:'+AGENT_NAME); return d ? JSON.stringify(JSON.parse(d), null, 2) : 'Not registered'; } }
 };
 
+// Auto task processor (optional feature)
+let autoProcessorEnabled = false;
+let taskProcessor = null;
+
+async function startAutoTaskProcessor() {
+  if (autoProcessorEnabled) return;
+  autoProcessorEnabled = true;
+  
+  try {
+    // Dynamic import for ES module compatibility
+    taskProcessor = await import('./task-processor.js');
+    console.log('🤖 Auto task processor started');
+    
+    // Task polling loop
+    setInterval(async () => {
+      try {
+        const tasks = await redisCmd('LRANGE', 'tasks:' + AGENT_NAME, '0', '0');
+        if (!tasks) return;
+        
+        const taskList = tasks.split('\n').filter(x => x);
+        for (const taskStr of taskList) {
+          try {
+            const taskData = JSON.parse(taskStr);
+            if (taskData.status !== 'pending') continue;
+            
+            console.log(`[Auto] Processing task: ${taskData.id}`);
+            
+            // Process task with whitelist check
+            const result = await taskProcessor.processTask(
+              taskData.task,
+              taskData,
+              getRedis(),
+              async (notification) => {
+                // Send Feishu notification
+                console.log('[Feishu] ' + notification.substring(0, 100) + '...');
+              }
+            );
+            
+            if (result.success) {
+              await completeTask(taskData.id, result.result);
+            } else if (result.reason === 'not_confirmed') {
+              console.log(`[Auto] Task ${taskData.id} waiting for confirmation`);
+            } else {
+              console.log(`[Auto] Task ${taskData.id} failed: ${result.message}`);
+            }
+          } catch (e) {
+            console.error('[Auto] Task processing error:', e.message);
+          }
+        }
+      } catch (e) {
+        console.error('[Auto] Polling error:', e.message);
+      }
+    }, 10000);
+    
+  } catch (e) {
+    console.error('Failed to start auto task processor:', e.message);
+  }
+}
+
+// Auto processor commands
+async function enableAutoProcessor() {
+  await startAutoTaskProcessor();
+  return '✅ Auto task processor enabled';
+}
+
+async function disableAutoProcessor() {
+  autoProcessorEnabled = false;
+  return '✅ Auto task processor disabled';
+}
+
+// Add new skills
+skills['redis-auto-enable'] = { 
+  description: 'Enable auto task processor', 
+  handler: async function() { return enableAutoProcessor(); }
+};
+
+skills['redis-auto-disable'] = { 
+  description: 'Disable auto task processor', 
+  handler: async function() { return disableAutoProcessor(); }
+};
+
 // CLI handler
 if (require.main === module) {
   if (!REDIS_HOST || !REDIS_PASSWORD) {
     console.log('Usage: REDIS_HOST=xxx REDIS_PASSWORD=xxx node index.cjs <command>');
-    console.log('Commands: agents [--detailed], find <cap>, register, send <to> <task>, complete <id> <result>, tasks, results, memories, history, status, --heartbeat');
+    console.log('Commands: agents [--detailed], find <cap>, register, send <to> <task>, complete <id> <result>, tasks, results, memories, history, status, --heartbeat, --auto');
     process.exit(1);
   }
   
@@ -418,6 +499,12 @@ if (require.main === module) {
   if (!cmd) {
     register().then(r => console.log(r));
     setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_INTERVAL * 1000);
+  } else if (cmd === '--auto') {
+    // Daemon mode with auto task processing
+    console.log('💓 Heartbeat + Auto Task Processor for ' + AGENT_NAME);
+    register().then(r => console.log(r));
+    setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_INTERVAL * 1000);
+    startAutoTaskProcessor();
   } else if (cmd === 'agents') listAgents(args.includes('--detailed')).then(console.log).catch(e=>console.error(e.message));
   else if (cmd === 'find') find(args[1], args[2]||'all').then(console.log).catch(e=>console.error(e.message));
   else if (cmd === 'register') register(args[1], args[2], args[3]).then(r => console.log(r)).catch(e=>console.error(e.message));
@@ -434,7 +521,7 @@ if (require.main === module) {
     register().then(r => console.log(r));
     setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_INTERVAL * 1000);
   } else {
-    console.log('Commands: agents [--detailed], find <cap>, register, send <to> <task>, complete <id> <result>, tasks, results, memories, history, status, --heartbeat');
+    console.log('Commands: agents [--detailed], find <cap>, register, send <to> <task>, complete <id> <result>, tasks, results, memories, history, status, --heartbeat, --auto');
     process.exit(1);
   }
 }

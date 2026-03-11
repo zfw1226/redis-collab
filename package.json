@@ -5,6 +5,7 @@
   "main": "index.js",
   "type": "module",
   "dependencies": {
-    "ioredis": "^5.10.0"
+    "ioredis": "^5.10.0",
+    "js-yaml": "^4.1.1"
   }
 }
