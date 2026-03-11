@@ -1,0 +1,8 @@
+{
+  "name": "redis-collab",
+  "version": "1.0.0",
+  "description": "Redis collaboration skill for OpenClaw",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {}
+}
