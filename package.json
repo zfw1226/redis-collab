@@ -4,5 +4,7 @@
   "description": "Redis collaboration skill for OpenClaw",
   "main": "index.js",
   "type": "module",
-  "dependencies": {}
+  "dependencies": {
+    "ioredis": "^5.10.0"
+  }
 }

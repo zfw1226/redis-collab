@@ -4,6 +4,21 @@ const { join } = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
+// Use ioredis for proper Redis communication (fixes encoding issues with Chinese chars)
+let redis = null;
+function getRedis() {
+  if (!redis) {
+    const Redis = require('ioredis');
+    redis = new Redis({
+      host: process.env.REDIS_HOST,
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      password: process.env.REDIS_PASSWORD,
+      maxRetriesPerRequest: 1
+    });
+  }
+  return redis;
+}
+
 const AGENT_NAME = process.env.AGENT_NAME || os.hostname();
 const REDIS_HOST = process.env.REDIS_HOST;
 const REDIS_PORT = process.env.REDIS_PORT || '6379';
@@ -13,14 +28,25 @@ const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL || '30');
 const TASK_TIMEOUT = parseInt(process.env.TASK_TIMEOUT || '300');
 const LOCK_TIMEOUT = parseInt(process.env.LOCK_TIMEOUT || '60');
 
-function redisCmd(...args) {
-  return new Promise((resolve, reject) => {
-    const cmd = [REDIS_CLI, '-h', REDIS_HOST, '-p', REDIS_PORT, '-a', REDIS_PASSWORD, ...args];
-    exec(cmd.join(' '), (err, stdout) => {
-      if (err) reject(err);
-      else resolve(stdout.trim());
-    });
-  });
+async function redisCmd(...args) {
+  const r = getRedis();
+  const cmd = args[0].toUpperCase();
+  
+  if (cmd === 'GET') return await r.get(args[1]) || '';
+  else if (cmd === 'SET') return await r.set(args[1], args[2]);
+  else if (cmd === 'SETEX') return await r.setex(args[1], args[2], args[3]);
+  else if (cmd === 'DEL') return await r.del(...args.slice(1));
+  else if (cmd === 'SADD') return await r.sadd(args[1], ...args.slice(2));
+  else if (cmd === 'SMEMBERS') { const m = await r.smembers(args[1]); return m ? m.join('\n') : ''; }
+  else if (cmd === 'RPUSH') return await r.rpush(args[1], ...args.slice(2));
+  else if (cmd === 'LTRIM') return await r.ltrim(args[1], args[2], args[3]);
+  else if (cmd === 'LLEN') return await r.llen(args[1]);
+  else if (cmd === 'LRANGE') { const l = await r.lrange(args[1], args[2], args[3]); return l ? l.join('\n') : ''; }
+  else if (cmd === 'LSET') return await r.lset(args[1], args[2], args[3]);
+  else if (cmd === 'INCR') return await r.incr(args[1]);
+  else if (cmd === 'DECR') return await r.decr(args[1]);
+  else if (cmd === 'KEYS') { const k = await r.keys(args[1]); return k ? k.join('\n') : ''; }
+  return '';
 }
 
 async function detectCompute() {
