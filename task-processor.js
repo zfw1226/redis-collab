@@ -33,24 +33,32 @@ function getDefaultConfig() {
 }
 
 // Task type detection
+// NOTE: 小红书相关任务优先通过 Agent Reach 执行
+// 原因：小红书需要登录，且 Agent Reach 更适合处理社交媒体内容
 function detectTaskType(task) {
   const lowerTask = task.toLowerCase();
   
-  // Search patterns
-  if (/搜索|查找|search|find|query/i.test(lowerTask)) return 'search';
-  if (/获取|fetch|get|download/i.test(lowerTask)) return 'fetch';
-  if (/读取|read|open/i.test(lowerTask)) return 'read';
-  if (/总结|summarize|归纳|summary/i.test(lowerTask)) return 'summarize';
-  if (/分析|analyze|analysis/i.test(lowerTask)) return 'analyze';
-  if (/生成|create|生成|write/i.test(lowerTask)) return 'create';
-  if (/删除|delete|remove|rm /i.test(lowerTask)) return 'delete';
-  if (/执行|exec|run|command/i.test(lowerTask)) return 'exec';
+  // Check for 小红书/Xiaohongshu tasks - mark for Agent Reach priority
+  if (/小红书|xiaohongshu|xhs/i.test(task)) {
+    return { type: 'search', platform: 'xiaohongshu', useAgentReach: true };
+  }
   
-  return 'unknown';
+  // Search patterns
+  if (/搜索|查找|search|find|query/i.test(lowerTask)) return { type: 'search', useAgentReach: false };
+  if (/获取|fetch|get|download/i.test(lowerTask)) return { type: 'fetch', useAgentReach: false };
+  if (/读取|read|open/i.test(lowerTask)) return { type: 'read', useAgentReach: false };
+  if (/总结|summarize|归纳|summary/i.test(lowerTask)) return { type: 'summarize', useAgentReach: false };
+  if (/分析|analyze|analysis/i.test(lowerTask)) return { type: 'analyze', useAgentReach: false };
+  if (/生成|create|生成|write/i.test(lowerTask)) return { type: 'create', useAgentReach: false };
+  if (/删除|delete|remove|rm /i.test(lowerTask)) return { type: 'delete', useAgentReach: false };
+  if (/执行|exec|run|command/i.test(lowerTask)) return { type: 'exec', useAgentReach: false };
+  
+  return { type: 'unknown', useAgentReach: false };
 }
 
 // Check if task matches whitelist/blacklist
-function checkTaskPermission(taskType, config) {
+function checkTaskPermission(taskTypeInfo, config) {
+  const taskType = typeof taskTypeInfo === 'object' ? taskTypeInfo.type : taskTypeInfo;
   const whitelist = config.WHITELIST || [];
   const blacklist = config.BLACKLIST || [];
   
@@ -68,7 +76,7 @@ function checkTaskPermission(taskType, config) {
     const pattern = getPattern(item);
     const cleanPattern = pattern.replace('*', '');
     if (taskType.startsWith(cleanPattern) || pattern === '*') {
-      return { allowed: false, reason: '黑名单任务类型', pattern };
+      return { allowed: false, reason: '黑名单任务类型', pattern, taskTypeInfo };
     }
   }
   
@@ -77,11 +85,11 @@ function checkTaskPermission(taskType, config) {
     const pattern = getPattern(item);
     const cleanPattern = pattern.replace('*', '');
     if (taskType.startsWith(cleanPattern) || pattern === '*') {
-      return { allowed: true, pattern };
+      return { allowed: true, pattern, taskTypeInfo };
     }
   }
   
-  return { allowed: false, reason: '不在白名单中', requiresConfirm: true };
+  return { allowed: false, reason: '不在白名单中', requiresConfirm: true, taskTypeInfo };
 }
 
 // Send Feishu notification via OpenClaw
@@ -202,10 +210,19 @@ async function executeTaskWithRetry(task, config, executeFn) {
 // Main task processor
 async function processTask(task, taskData, redis, sendNotificationFn) {
   const config = loadConfig();
-  const taskType = detectTaskType(task);
-  const permission = checkTaskPermission(taskType, config);
+  const taskTypeInfo = detectTaskType(task);
+  const taskType = typeof taskTypeInfo === 'object' ? taskTypeInfo.type : taskTypeInfo;
+  const permission = checkTaskPermission(taskTypeInfo, config);
   
   console.log(`[Task] Type detected: ${taskType}, Allowed: ${permission.allowed}`);
+  
+  // 🔴 MARK: 小红书任务优先通过 Agent Reach 执行
+  if (typeof taskTypeInfo === 'object' && taskTypeInfo.useAgentReach) {
+    console.log(`[Task] 🔴 MARK: ${taskTypeInfo.platform} task detected - recommend using Agent Reach`);
+    console.log(`[Task] Platform: ${taskTypeInfo.platform}, Priority: Agent Reach > Browser`);
+    // Note: This is logged but execution continues through normal flow
+    // The sub-agent prompt should be configured to use Agent Reach for these tasks
+  }
   
   // If not allowed and requires confirmation
   if (!permission.allowed && permission.requiresConfirm) {
@@ -265,6 +282,11 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
     
     console.log(`[Task] Spawning sub-agent for task: ${taskData.id}`);
     console.log(`[Task] Task content: ${t.substring(0, 80)}...`);
+    
+    // 🔴 MARK: Add Agent Reach recommendation to prompt if 小红书 task
+    if (typeof taskTypeInfo === 'object' && taskTypeInfo.useAgentReach) {
+      console.log(`[Task] 🔴 MARK: Adding Agent Reach instruction to sub-agent prompt`);
+    }
     
     // Step 1: Create spawn request
     const spawnResult = await spawnSubAgent(t, taskData, redis);

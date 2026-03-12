@@ -79,6 +79,25 @@ export async function spawnSubAgent(task, taskData, redis) {
  * 构建给 Sub-Agent 的系统提示词
  */
 function buildSubAgentPrompt(task, taskData) {
+  // 🔴 MARK: 检测是否是 小红书/Xiaohongshu 任务
+  const isXiaohongshu = /小红书|xiaohongshu|xhs/i.test(task);
+  
+  let platformSpecificInstructions = '';
+  
+  if (isXiaohongshu) {
+    platformSpecificInstructions = `
+🔴 IMPORTANT MARK: 小红书任务执行指南
+本任务涉及小红书平台，请按以下优先级选择工具：
+1. 【首选】使用 Agent Reach 技能 (ara search-xhs) 搜索小红书内容
+   - Agent Reach 更适合处理社交媒体内容
+   - 可以绕过登录限制
+   - 命令格式: ara search-xhs "关键词"
+2. 【备选】使用 browser 访问小红书网页版（可能需要登录）
+3. 【备选】使用 web_search 搜索小红书相关内容
+
+执行前请先检查是否可以使用 Agent Reach 技能。`;
+  }
+  
   return `你是一个任务执行智能体，专门负责完成具体的执行工作。
 
 【任务信息】
@@ -86,6 +105,7 @@ function buildSubAgentPrompt(task, taskData) {
 - 来源: ${taskData.from}
 - 优先级: ${taskData.priority || 'normal'}
 - 任务内容: ${task}
+${platformSpecificInstructions}
 
 【执行要求】
 1. 仔细分析任务需求
