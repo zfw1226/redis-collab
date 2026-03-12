@@ -14,9 +14,14 @@ import Redis from 'ioredis';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// 🔴 使用 OpenClaw 标准本地数据目录
+const LOCAL_DATA_DIR = path.join(os.homedir(), '.openclaw', 'workspace', '.local', 'redis-collab');
+const TASK_EXECUTIONS_DIR = path.join(LOCAL_DATA_DIR, 'task-executions');
 
 const REDIS_HOST = process.env.REDIS_HOST || '43.131.241.215';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');

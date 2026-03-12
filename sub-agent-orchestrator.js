@@ -5,12 +5,24 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import os from 'os';
 
 // Import completeTask from index.cjs (CommonJS module)
 import { completeTask } from './index.cjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// 🔴 使用 OpenClaw 标准本地数据目录存储任务执行日志
+// 路径: ~/.openclaw/workspace/.local/redis-collab/task-executions/
+const LOCAL_DATA_DIR = path.join(os.homedir(), '.openclaw', 'workspace', '.local', 'redis-collab');
+const TASK_EXECUTIONS_DIR = path.join(LOCAL_DATA_DIR, 'task-executions');
+
+// 确保目录存在
+if (!fs.existsSync(TASK_EXECUTIONS_DIR)) {
+  fs.mkdirSync(TASK_EXECUTIONS_DIR, { recursive: true });
+  console.log(`[Sub-Agent] Created local data directory: ${TASK_EXECUTIONS_DIR}`);
+}
 
 /**
  * 调用 Sub-Agent 执行任务（通过 sessions_spawn）
@@ -24,8 +36,8 @@ export async function spawnSubAgent(task, taskData, redis) {
   console.log(`[Sub-Agent Spawner] Task: ${task.substring(0, 100)}...`);
   
   try {
-    // 创建任务执行目录
-    const taskDir = path.join(__dirname, 'task-executions', taskData.id);
+    // 创建任务执行目录（在本地数据目录中）
+    const taskDir = path.join(TASK_EXECUTIONS_DIR, taskData.id);
     if (!fs.existsSync(taskDir)) {
       fs.mkdirSync(taskDir, { recursive: true });
     }
@@ -360,7 +372,8 @@ function extractKeywords(task) {
  * 检查 Sub-Agent 执行结果
  */
 export async function checkSubAgentResult(taskData, redis) {
-  const taskDir = path.join(__dirname, 'task-executions', taskData.id);
+  // 🔴 使用本地数据目录
+  const taskDir = path.join(TASK_EXECUTIONS_DIR, taskData.id);
   const resultFile = path.join(taskDir, 'task.txt.result');
   const toolsFile = path.join(taskDir, 'tools.json');
   const logFile = path.join(taskDir, 'execution.log');
