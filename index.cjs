@@ -419,7 +419,7 @@ async function startAutoTaskProcessor() {
     // Task polling loop
     setInterval(async () => {
       try {
-        const tasks = await redisCmd('LRANGE', 'tasks:' + AGENT_NAME, '0', '0');
+        const tasks = await redisCmd('LRANGE', 'tasks:' + AGENT_NAME, '0', '-1');
         if (!tasks) return;
         
         const taskList = tasks.split('\n').filter(x => x);

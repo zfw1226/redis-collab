@@ -247,15 +247,51 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
     };
   }
   
-  // Execute task
+  // Execute task using Sub-Agent Orchestrator
   const executeFn = async (t) => {
-    // Default execution - just return task info
-    // Subclasses can override this
-    return {
-      task: t,
-      executed: true,
-      timestamp: new Date().toISOString()
-    };
+    // Import sub-agent orchestrator
+    const { spawnSubAgent, checkSubAgentResult } = await import('./sub-agent-orchestrator.js');
+    
+    console.log(`[Task] Spawning sub-agent for task: ${taskData.id}`);
+    console.log(`[Task] Task content: ${t.substring(0, 80)}...`);
+    
+    // Step 1: Create spawn request
+    const spawnResult = await spawnSubAgent(t, taskData, redis);
+    
+    if (!spawnResult.success) {
+      throw new Error(`Failed to create spawn request: ${spawnResult.error}`);
+    }
+    
+    console.log(`[Task] Sub-agent spawn request created: ${spawnResult.taskDir}`);
+    console.log(`[Task] Waiting for sub-agent to complete...`);
+    
+    // Step 2: Wait for sub-agent to complete (max 30 minutes)
+    const maxWait = 30 * 60 * 1000;
+    const startTime = Date.now();
+    const checkInterval = 10000; // Check every 10 seconds
+    
+    while (Date.now() - startTime < maxWait) {
+      const result = await checkSubAgentResult(taskData, redis);
+      
+      if (result.success) {
+        console.log(`[Task] Sub-agent completed successfully`);
+        return {
+          result: result.result,
+          tools_used: result.tools,
+          executed_by: 'sub-agent',
+          completed_at: new Date().toISOString()
+        };
+      }
+      
+      if (result.error) {
+        throw new Error(`Sub-agent failed: ${result.error}`);
+      }
+      
+      // Still processing, wait and check again
+      await sleep(checkInterval);
+    }
+    
+    throw new Error('Sub-agent execution timeout (30 minutes)');
   };
   
   const result = await executeTaskWithRetry(task, config, executeFn);

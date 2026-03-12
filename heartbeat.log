@@ -1,3 +1,2 @@
-💓 Heartbeat + Auto Task Processor for MacStudio-本地
-🤖 Auto task processor started
-✅ Agent updated: MacStudio-本地
+Usage: REDIS_HOST=xxx REDIS_PASSWORD=xxx node index.cjs <command>
+Commands: agents [--detailed], find <cap>, register, send <to> <task>, complete <id> <result>, tasks, results, memories, history, status, --heartbeat, --auto
