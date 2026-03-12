@@ -61,7 +61,7 @@ async function detectCompute() {
 // Get real-time system metrics
 async function getSystemMetrics() {
   const metrics = {
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(new Date().getTime() + 8*3600000).toISOString(),
     cpuUsage: null,
     loadAvg: null,
     memoryTotal: null,
@@ -160,9 +160,9 @@ async function register(nets, computes, roles, force) {
   
   const data = JSON.stringify({
     name: AGENT_NAME,
-    registeredAt: parsed.registeredAt || new Date().toISOString(),
-    lastHeartbeat: new Date().toISOString(),
-    lastOnline: parsed.lastOnline || new Date().toISOString(),
+    registeredAt: parsed.registeredAt || new Date(new Date().getTime() + 8*3600000).toISOString(),
+    lastHeartbeat: new Date(new Date().getTime() + 8*3600000).toISOString(),
+    lastOnline: parsed.lastOnline || new Date(new Date().getTime() + 8*3600000).toISOString(),
     status: 'online',
     networkCapabilities: netCaps.length ? netCaps : (parsed.networkCapabilities || []),
     computeCapabilities: compCaps.length ? compCaps : (parsed.computeCapabilities || []),
@@ -189,7 +189,7 @@ async function heartbeat() {
   const existing = await redisCmd('GET', 'agent:' + AGENT_NAME);
   if (existing) {
     const d = JSON.parse(existing);
-    d.lastHeartbeat = new Date().toISOString();
+    d.lastHeartbeat = new Date(new Date().getTime() + 8*3600000).toISOString();
     d.status = 'online';
     d.eventCount = (d.eventCount || 0) + 1;
     d.metrics = await getSystemMetrics();  // Update real-time metrics
@@ -197,12 +197,12 @@ async function heartbeat() {
   } else {
     await register();
   }
-  await redisCmd('RPUSH', 'heartbeat:history:' + AGENT_NAME, new Date().toISOString());
+  await redisCmd('RPUSH', 'heartbeat:history:' + AGENT_NAME, new Date(new Date().getTime() + 8*3600000).toISOString());
   await redisCmd('LTRIM', 'heartbeat:history:' + AGENT_NAME, -100, -1);
 }
 
 async function logEvent(type, data) {
-  const event = JSON.stringify({ type, agent: AGENT_NAME, timestamp: new Date().toISOString(), data });
+  const event = JSON.stringify({ type, agent: AGENT_NAME, timestamp: new Date(new Date().getTime() + 8*3600000).toISOString(), data });
   await redisCmd('RPUSH', 'events:global', event);
   await redisCmd('LTRIM', 'events:global', -500, -1);
 }
@@ -215,7 +215,7 @@ async function acquireLock(resource, owner) {
     const lock = JSON.parse(existing);
     if (lock.owner !== owner && Date.now() < lock.expireAt) return null;
   }
-  const lock = JSON.stringify({ owner, acquireAt: new Date().toISOString(), expireAt: Date.now() + LOCK_TIMEOUT * 1000 });
+  const lock = JSON.stringify({ owner, acquireAt: new Date(new Date().getTime() + 8*3600000).toISOString(), expireAt: Date.now() + LOCK_TIMEOUT * 1000 });
   await redisCmd('SET', lockKey, lock, 'EX', LOCK_TIMEOUT);
   return lock;
 }
@@ -234,7 +234,7 @@ async function releaseLock(resource, owner) {
 async function sendTask(to, task, priority) {
   priority = priority || 'normal';
   const id = crypto.randomBytes(4).toString('hex');
-  const taskData = JSON.stringify({ id, from: AGENT_NAME, to, task, priority, timestamp: new Date().toISOString(), status: 'pending', attempts: 0, result: null });
+  const taskData = JSON.stringify({ id, from: AGENT_NAME, to, task, priority, timestamp: new Date(new Date().getTime() + 8*3600000).toISOString(), status: 'pending', attempts: 0, result: null });
   await redisCmd('RPUSH', 'tasks:' + to, taskData);
   await logEvent('task_sent', { id, to, task: task.substring(0, 50) });
   return '✅ Task to ' + to + ': ' + task + '\nID: ' + id + '\nPriority: ' + priority;
@@ -249,9 +249,9 @@ async function completeTask(taskId, result) {
       const p = JSON.parse(list[i]);
       if (p.id === taskId) {
         p.status = 'completed';
-        p.completedAt = new Date().toISOString();
+        p.completedAt = new Date(new Date().getTime() + 8*3600000).toISOString();
         p.result = result;
-        const resultData = JSON.stringify({ taskId, from: AGENT_NAME, to: p.from, result, timestamp: new Date().toISOString() });
+        const resultData = JSON.stringify({ taskId, from: AGENT_NAME, to: p.from, result, timestamp: new Date(new Date().getTime() + 8*3600000).toISOString() });
         await redisCmd('RPUSH', 'results:' + p.from, resultData);
         await redisCmd('LSET', 'tasks:' + AGENT_NAME, i, JSON.stringify(p));
         await logEvent('task_completed', { taskId, result: result?.substring(0, 50) });
@@ -451,7 +451,7 @@ async function shareMemory(content) {
     id, 
     agent: AGENT_NAME, 
     content, 
-    timestamp: new Date().toISOString() 
+    timestamp: new Date(new Date().getTime() + 8*3600000).toISOString() 
   };
   if (fileInfo) memory.file = fileInfo;
   

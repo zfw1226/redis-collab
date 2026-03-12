@@ -445,7 +445,6 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
     if (confirmResult.addToWhitelist) {
       addToWhitelist(taskType, `${taskType}类任务`);
       console.log(`[Task] Added ${taskType} to whitelist`);
-      
       if (sendNotificationFn) {
         const notification = await sendFeishuNotification('added_to_whitelist', { 
           task_type: taskType,
