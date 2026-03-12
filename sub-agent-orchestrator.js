@@ -95,8 +95,10 @@ function buildSubAgentPrompt(task, taskData) {
 本任务需要读取网页内容，优先使用 Agent Reach 'read' 命令：
 
 【首选工具】Agent Reach - Read
-命令格式: ara read "URL"
-示例: ara read "${taskTypeInfo.url || 'https://example.com'}"
+命令格式: source ~/.openclaw/workspace/skills/agent-reach/bin/ara-env && agent-reach read "URL"
+示例: source ~/.openclaw/workspace/skills/agent-reach/bin/ara-env && agent-reach read "${taskTypeInfo.url || 'https://example.com'}"
+
+⚠️ 重要: 必须先激活环境再执行命令！
 
 优势:
 - 专门优化用于网页内容提取
@@ -113,8 +115,10 @@ function buildSubAgentPrompt(task, taskData) {
 本任务适合使用 Agent Reach 通用搜索：
 
 【首选工具】Agent Reach - Search
-命令格式: ara search "关键词"
-示例: ara search "${extractKeywords(task)}"
+命令格式: source ~/.openclaw/workspace/skills/agent-reach/bin/ara-env && agent-reach search "关键词"
+示例: source ~/.openclaw/workspace/skills/agent-reach/bin/ara-env && agent-reach search "${extractKeywords(task)}"
+
+⚠️ 重要: 必须先激活环境再执行命令！
 
 优势:
 - 综合多个平台搜索结果
@@ -132,8 +136,10 @@ function buildSubAgentPrompt(task, taskData) {
 本任务涉及 ${taskTypeInfo.platform} 平台，请优先使用 Agent Reach 技能：
 
 【首选工具】Agent Reach
-命令格式: ara ${taskTypeInfo.toolCommand} "搜索关键词"
-示例: ara ${taskTypeInfo.toolCommand} "${extractKeywords(task)}"
+命令格式: source ~/.openclaw/workspace/skills/agent-reach/bin/ara-env && agent-reach ${taskTypeInfo.toolCommand} "搜索关键词"
+示例: source ~/.openclaw/workspace/skills/agent-reach/bin/ara-env && agent-reach ${taskTypeInfo.toolCommand} "${extractKeywords(task)}"
+
+⚠️ 重要: 必须先激活环境再执行命令！
 
 优势:
 - 专门为 ${taskTypeInfo.platform} 优化
