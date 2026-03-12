@@ -96,14 +96,7 @@ async function sendFeishuNotification(type, data) {
       break;
   }
   
-  // Use OpenClaw message tool
-  try {
-    // This will be called from the main module
-    return message;
-  } catch (e) {
-    console.error('Failed to send Feishu notification:', e);
-    return null;
-  }
+  return message;
 }
 
 // Add task type to whitelist
@@ -136,19 +129,26 @@ function addToWhitelist(taskType, description) {
 }
 
 // Wait for user confirmation (via Redis or file polling)
-async function waitForConfirmation(taskId, timeoutSeconds) {
+async function waitForConfirmation(taskId, timeoutMs, redis) {
   const startTime = Date.now();
-  const timeout = timeoutSeconds * 1000;
   const confirmKey = `confirm:${taskId}`;
   
-  // Create confirmation request
-  // In real implementation, this would be checked via Redis or file
-  console.log(`[Task ${taskId}] Waiting for confirmation (${timeoutSeconds}s)...`);
+  console.log(`[Task ${taskId}] Waiting for confirmation (${timeoutMs}ms)...`);
   
   // Poll for response
-  while (Date.now() - startTime < timeout) {
-    // Check for response (simplified - in real impl, check Redis or file)
-    await sleep(1000);
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      if (redis) {
+        const result = await redis.get(confirmKey);
+        if (result) {
+          await redis.del(confirmKey);
+          return JSON.parse(result);
+        }
+      }
+    } catch (e) {
+      console.error('[Confirmation] Error checking Redis:', e.message);
+    }
+    await sleep(2000);
   }
   
   return { confirmed: false, reason: 'timeout' };
@@ -189,26 +189,31 @@ async function executeTaskWithRetry(task, config, executeFn) {
 }
 
 // Main task processor
-async function processTask(task, taskData, redisInstance, sendNotificationFn) {
+async function processTask(task, taskData, redis, sendNotificationFn) {
   const config = loadConfig();
   const taskType = detectTaskType(task);
   const permission = checkTaskPermission(taskType, config);
   
   console.log(`[Task] Type detected: ${taskType}, Allowed: ${permission.allowed}`);
   
-  // Import Feishu notifier
-  const { sendTaskConfirmation, waitForConfirmation } = await import('./feishu-notifier.js');
-  
   // If not allowed and requires confirmation
   if (!permission.allowed && permission.requiresConfirm) {
-    // Send Feishu confirmation request
-    const confirmId = await sendTaskConfirmation({
-      ...taskData,
-      taskType
-    });
+    console.log(`[Task] Requires confirmation, sending notification...`);
     
-    // Wait for user confirmation via Redis
-    const confirmResult = await waitForConfirmation(confirmId, (config.CONFIRM_TIMEOUT || 5) * 60 * 1000);
+    // Send notification if function provided
+    if (sendNotificationFn) {
+      const notification = await sendFeishuNotification('new_task', {
+        from: taskData.from,
+        task: task.substring(0, 100),
+        task_type: taskType,
+        priority: taskData.priority || 'normal'
+      });
+      await sendNotificationFn(notification);
+    }
+    
+    // Wait for user confirmation
+    const timeoutMs = (config.CONFIRM_TIMEOUT || 5) * 60 * 1000;
+    const confirmResult = await waitForConfirmation(taskData.id, timeoutMs, redis);
     
     if (!confirmResult.confirmed) {
       return { 
@@ -222,33 +227,13 @@ async function processTask(task, taskData, redisInstance, sendNotificationFn) {
     if (confirmResult.addToWhitelist) {
       addToWhitelist(taskType, `${taskType}类任务`);
       console.log(`[Task] Added ${taskType} to whitelist`);
-    }
-  }
-  
-  // If blacklisted
-  if (!permission.allowed && !permission.requiresConfirm) {
-    return { 
-      success: false, 
-      reason: 'blacklisted',
-      message: `Task type '${taskType}' is blacklisted: ${permission.reason}` 
-    };
-  }
-    
-    if (!confirmResult.confirmed) {
-      return { 
-        success: false, 
-        reason: 'not_confirmed',
-        message: `Task not confirmed within ${config.CONFIRM_TIMEOUT}s` 
-      };
-    }
-    
-    // If user chose to add to whitelist
-    if (confirmResult.addToWhitelist) {
-      addToWhitelist(taskType, `${taskType}类任务`);
+      
       if (sendNotificationFn) {
-        await sendNotificationFn(
-          await sendFeishuNotification('added_to_whitelist', { task_type: taskType })
-        );
+        const notification = await sendFeishuNotification('added_to_whitelist', { 
+          task_type: taskType,
+          description: `${taskType}类任务`
+        });
+        await sendNotificationFn(notification);
       }
     }
   }
@@ -262,82 +247,37 @@ async function processTask(task, taskData, redisInstance, sendNotificationFn) {
     };
   }
   
-// Execute task via subagent (executor.js)
+  // Execute task
   const executeFn = async (t) => {
-    return new Promise((resolve, reject) => {
-      const executorPath = path.join(__dirname, 'executor.js');
-      const env = {
-        ...process.env,
-        TASK_DATA: JSON.stringify(taskData),
-        REDIS_HOST,
-        REDIS_PORT,
-        REDIS_PASSWORD,
-        AGENT_NAME
-      };
-      
-      console.log(`[Task] Spawning subagent for task ${taskData.id}`);
-      
-      const child = spawn('node', [executorPath], {
-        env,
-        detached: true,
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-      
-      let stdout = '';
-      let stderr = '';
-      
-      child.stdout.on('data', (data) => {
-        stdout += data.toString();
-        console.log(`[Subagent ${taskData.id}]`, data.toString().trim());
-      });
-      
-      child.stderr.on('data', (data) => {
-        stderr += data.toString();
-        console.error(`[Subagent ${taskData.id} Error]`, data.toString().trim());
-      });
-      
-      child.on('close', (code) => {
-        if (code === 0) {
-          resolve({
-            result: `Task executed by subagent. See Redis for details.`,
-            stdout: stdout.substring(0, 500)
-          });
-        } else {
-          reject(new Error(`Subagent exited with code ${code}: ${stderr}`));
-        }
-      });
-      
-      child.on('error', (err) => {
-        reject(new Error(`Failed to spawn subagent: ${err.message}`));
-      });
-      
-      setTimeout(() => {
-        resolve({
-          result: `Task ${taskData.id} started in subagent. Monitoring via Redis...`,
-          subagentPid: child.pid
-        });
-      }, 1000);
-    });
+    // Default execution - just return task info
+    // Subclasses can override this
+    return {
+      task: t,
+      executed: true,
+      timestamp: new Date().toISOString()
+    };
   };
   
   const result = await executeTaskWithRetry(task, config, executeFn);
   
   // Send completion/failure notification
-  if (result.success) {
-    const notification = await sendFeishuNotification('task_completed', {
-      task: task.substring(0, 50),
-      result: result.result
-    });
-    if (sendNotificationFn) await sendNotificationFn(notification);
-  } else {
-    const notification = await sendFeishuNotification('task_failed', {
-      task: task.substring(0, 50),
-      from: taskData.from,
-      attempts: result.attempts,
-      max_attempts: config.RETRY?.max_attempts || 3,
-      error: result.error
-    });
-    if (sendNotificationFn) await sendNotificationFn(notification);
+  if (sendNotificationFn) {
+    if (result.success) {
+      const notification = await sendFeishuNotification('task_completed', {
+        task: task.substring(0, 50),
+        result: result.result
+      });
+      await sendNotificationFn(notification);
+    } else {
+      const notification = await sendFeishuNotification('task_failed', {
+        task: task.substring(0, 50),
+        from: taskData.from,
+        attempts: result.attempts,
+        max_attempts: config.RETRY?.max_attempts || 3,
+        error: result.error
+      });
+      await sendNotificationFn(notification);
+    }
   }
   
   return result;
