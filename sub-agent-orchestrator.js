@@ -7,8 +7,9 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
 
-// Import completeTask from index.cjs (CommonJS module)
-import { completeTaskWithPubSub } from './index.cjs';
+import { checkUrlAgentReachSupport, detectTaskType } from './utils.mjs';
+// Will load dynamically (CommonJS module)
+// Will load dynamically
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -313,58 +314,6 @@ function detectTaskTypeForPrompt(task) {
 }
 
 /**
- * 🔴 Check if a URL is supported by Agent Reach
- * @param {string} url - The URL to check
- * @returns {object} - { supported: boolean, platform: string, command: string }
- */
-function checkUrlAgentReachSupport(url) {
-  const lowerUrl = url.toLowerCase();
-  
-  // 小红书/Xiaohongshu
-  if (/xiaohongshu\.com|xhs\.link/i.test(lowerUrl)) {
-    return { supported: true, platform: 'xiaohongshu', command: 'search-xhs' };
-  }
-  
-  // Twitter/X
-  if (/twitter\.com|x\.com/i.test(lowerUrl)) {
-    return { supported: true, platform: 'twitter', command: 'search-twitter' };
-  }
-  
-  // Instagram
-  if (/instagram\.com/i.test(lowerUrl)) {
-    return { supported: true, platform: 'instagram', command: 'search-instagram' };
-  }
-  
-  // YouTube
-  if (/youtube\.com|youtu\.be/i.test(lowerUrl)) {
-    return { supported: true, platform: 'youtube', command: 'search-youtube' };
-  }
-  
-  // Bilibili
-  if (/bilibili\.com|b23\.tv/i.test(lowerUrl)) {
-    return { supported: true, platform: 'bilibili', command: 'search-bilibili' };
-  }
-  
-  // GitHub
-  if (/github\.com/i.test(lowerUrl)) {
-    return { supported: true, platform: 'github', command: 'search-github' };
-  }
-  
-  // Boss直聘
-  if (/zhipin\.com/i.test(lowerUrl)) {
-    return { supported: true, platform: 'boss', command: 'search-boss' };
-  }
-  
-  // LinkedIn
-  if (/linkedin\.com/i.test(lowerUrl)) {
-    return { supported: true, platform: 'linkedin', command: 'search-linkedin' };
-  }
-  
-  // Not supported by Agent Reach
-  return { supported: false, platform: 'unknown', command: null };
-}
-
-/**
  * 提取搜索关键词
  */
 function extractKeywords(task) {
@@ -411,7 +360,8 @@ export async function checkSubAgentResult(taskData, redis) {
     // 🔴 重要：调用 completeTaskWithPubSub 将结果发送回原始发送方（含 Pub/Sub 通知）
     try {
       console.log(`[Sub-Agent] Sending result back to ${taskData.from} via Pub/Sub...`);
-      await completeTaskWithPubSub(taskData.id, result);
+      const index = await import('./index.cjs');
+      await index.completeTaskWithPubSub(taskData.id, result);
       console.log(`[Sub-Agent] ✅ Result sent successfully to ${taskData.from}`);
     } catch (err) {
       console.error(`[Sub-Agent] ❌ Failed to send result: ${err.message}`);
