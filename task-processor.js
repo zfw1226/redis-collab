@@ -40,6 +40,29 @@ function getDefaultConfig() {
 function detectTaskType(task) {
   const lowerTask = task.toLowerCase();
   
+  // 🔴 Check if task contains a URL - determine if Agent Reach can handle it
+  const urlMatch = task.match(/(https?:\/\/[^\s]+)/);
+  if (urlMatch) {
+    const url = urlMatch[1];
+    const agentReachSupport = checkUrlAgentReachSupport(url);
+    if (agentReachSupport.supported) {
+      console.log(`[Task] URL detected: ${url}`);
+      console.log(`[Task] Agent Reach can handle this platform: ${agentReachSupport.platform}`);
+      return {
+        type: 'fetch',
+        platform: agentReachSupport.platform,
+        priority: 1,
+        tool: 'agent-reach',
+        toolCommand: agentReachSupport.command,
+        url: url,
+        reason: 'URL platform supported by Agent Reach'
+      };
+    } else {
+      console.log(`[Task] URL detected: ${url}`);
+      console.log(`[Task] Agent Reach cannot handle this platform, will use Browser`);
+    }
+  }
+  
   // 🔴 PRIORITY 1: Agent Reach platforms (social media)
   // 小红书/Xiaohongshu
   if (/小红书|xiaohongshu|xhs/i.test(task)) {
@@ -489,6 +512,58 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
   }
   
   return result;
+}
+
+/**
+ * 🔴 Check if a URL is supported by Agent Reach
+ * @param {string} url - The URL to check
+ * @returns {object} - { supported: boolean, platform: string, command: string }
+ */
+function checkUrlAgentReachSupport(url) {
+  const lowerUrl = url.toLowerCase();
+  
+  // 小红书/Xiaohongshu
+  if (/xiaohongshu\.com|xhs\.link/i.test(lowerUrl)) {
+    return { supported: true, platform: 'xiaohongshu', command: 'search-xhs' };
+  }
+  
+  // Twitter/X
+  if (/twitter\.com|x\.com/i.test(lowerUrl)) {
+    return { supported: true, platform: 'twitter', command: 'search-twitter' };
+  }
+  
+  // Instagram
+  if (/instagram\.com/i.test(lowerUrl)) {
+    return { supported: true, platform: 'instagram', command: 'search-instagram' };
+  }
+  
+  // YouTube
+  if (/youtube\.com|youtu\.be/i.test(lowerUrl)) {
+    return { supported: true, platform: 'youtube', command: 'search-youtube' };
+  }
+  
+  // Bilibili
+  if (/bilibili\.com|b23\.tv/i.test(lowerUrl)) {
+    return { supported: true, platform: 'bilibili', command: 'search-bilibili' };
+  }
+  
+  // GitHub
+  if (/github\.com/i.test(lowerUrl)) {
+    return { supported: true, platform: 'github', command: 'search-github' };
+  }
+  
+  // Boss直聘
+  if (/zhipin\.com/i.test(lowerUrl)) {
+    return { supported: true, platform: 'boss', command: 'search-boss' };
+  }
+  
+  // LinkedIn
+  if (/linkedin\.com/i.test(lowerUrl)) {
+    return { supported: true, platform: 'linkedin', command: 'search-linkedin' };
+  }
+  
+  // Not supported by Agent Reach
+  return { supported: false, platform: 'unknown', command: null };
 }
 
 export {
