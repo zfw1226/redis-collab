@@ -1,5 +1,25 @@
+# Dependencies
 node_modules/
-.git.backup/
-.env
 
+# Local task execution logs
+task-executions/
 *.log
+
+# Environment files
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
+*.tmp
