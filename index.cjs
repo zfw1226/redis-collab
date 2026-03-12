@@ -526,4 +526,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { skills };
+module.exports = { skills, completeTask };
