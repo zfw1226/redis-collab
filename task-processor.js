@@ -34,9 +34,9 @@ function getDefaultConfig() {
 
 // Task type detection with Tool Priority Strategy
 // PRIORITY ORDER:
-// 1. Agent Reach (社交平台: 小红书, Twitter, Instagram, YouTube 等)
-// 2. MCP Search (Tavily/MiniMax)
-// 3. Browser (最后备选)
+// 1. Agent Reach (社交平台 + 网页读取 + 通用搜索)
+// 2. MCP Search (Tavily/MiniMax for specific search needs)
+// 3. Browser (复杂交互、特定网站)
 function detectTaskType(task) {
   const lowerTask = task.toLowerCase();
   
@@ -58,12 +58,46 @@ function detectTaskType(task) {
         reason: 'URL platform supported by Agent Reach'
       };
     } else {
+      // 🔴 URL not directly supported by Agent Reach platforms, but can use 'ara read'
       console.log(`[Task] URL detected: ${url}`);
-      console.log(`[Task] Agent Reach cannot handle this platform, will use Browser`);
+      console.log(`[Task] Using Agent Reach 'read' for generic URL content extraction`);
+      return {
+        type: 'read',
+        platform: 'web',
+        priority: 1,
+        tool: 'agent-reach',
+        toolCommand: 'read',
+        url: url,
+        reason: 'Generic URL - use Agent Reach read command'
+      };
     }
   }
   
-  // 🔴 PRIORITY 1: Agent Reach platforms (social media)
+  // 🔴 Check for generic "read this link/webpage" tasks
+  if (/读取链接|读取网页|这个链接|这个网页|read.*link|read.*url/i.test(task)) {
+    return {
+      type: 'read',
+      platform: 'web',
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'read',
+      reason: 'Explicit webpage reading task'
+    };
+  }
+  
+  // 🔴 Check for generic search tasks - Agent Reach search is often better than MCP
+  if (/查一下|搜索一下|看看|找一下|通用搜索|search/i.test(task)) {
+    return {
+      type: 'search',
+      platform: 'web',
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search',
+      reason: 'Generic search - Agent Reach preferred'
+    };
+  }
+  
+  // 🔴 PRIORITY 1: Agent Reach platforms (social media + professional)
   // 小红书/Xiaohongshu
   if (/小红书|xiaohongshu|xhs/i.test(task)) {
     return { 

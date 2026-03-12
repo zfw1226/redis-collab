@@ -88,7 +88,46 @@ function buildSubAgentPrompt(task, taskData) {
   // 🔴 根据优先级生成工具选择指南
   if (taskTypeInfo.priority === 1) {
     // Agent Reach 优先
-    toolPriorityInstructions = `
+    if (taskTypeInfo.toolCommand === 'read') {
+      // Agent Reach read command for URLs
+      toolPriorityInstructions = `
+🔴 TOOL PRIORITY: Agent Reach - Read (Priority 1)
+本任务需要读取网页内容，优先使用 Agent Reach 'read' 命令：
+
+【首选工具】Agent Reach - Read
+命令格式: ara read "URL"
+示例: ara read "${taskTypeInfo.url || 'https://example.com'}"
+
+优势:
+- 专门优化用于网页内容提取
+- 可处理多种网站格式
+- 自动提取主要内容，过滤广告
+
+如果 Agent Reach read 失败，再考虑:
+- 【备选1】Browser 直接访问网页
+- 【备选2】MCP Search 获取相关信息`;
+    } else if (taskTypeInfo.toolCommand === 'search') {
+      // Agent Reach generic search
+      toolPriorityInstructions = `
+🔴 TOOL PRIORITY: Agent Reach - Search (Priority 1)
+本任务适合使用 Agent Reach 通用搜索：
+
+【首选工具】Agent Reach - Search
+命令格式: ara search "关键词"
+示例: ara search "${extractKeywords(task)}"
+
+优势:
+- 综合多个平台搜索结果
+- 快速获取全网信息
+- 无需指定具体平台
+
+如果 Agent Reach search 结果不足，再考虑:
+- 【备选1】MCP Search (tavily/minimax) 获取更详细结果
+- 【备选2】指定具体平台搜索 (如 search-xhs, search-twitter 等)
+- 【备选3】Browser 访问具体网站`;
+    } else {
+      // Agent Reach platform-specific search
+      toolPriorityInstructions = `
 🔴 TOOL PRIORITY: Agent Reach (Priority 1)
 本任务涉及 ${taskTypeInfo.platform} 平台，请优先使用 Agent Reach 技能：
 
@@ -104,6 +143,7 @@ function buildSubAgentPrompt(task, taskData) {
 如果 Agent Reach 失败，再考虑:
 - 【备选1】MCP Search (tavily/minimax)
 - 【备选2】Browser 直接访问`;
+    }
   } else if (taskTypeInfo.priority === 2) {
     // MCP Search 优先
     toolPriorityInstructions = `
@@ -186,7 +226,39 @@ function detectTaskTypeForPrompt(task) {
         toolCommand: agentReachSupport.command,
         url: url
       };
+    } else {
+      // Generic URL - use Agent Reach 'read' command
+      return {
+        type: 'read',
+        platform: 'web',
+        priority: 1,
+        tool: 'agent-reach',
+        toolCommand: 'read',
+        url: url
+      };
     }
+  }
+  
+  // 🔴 Check for generic "read this link/webpage" tasks
+  if (/读取链接|读取网页|这个链接|这个网页|read.*link|read.*url/i.test(task)) {
+    return {
+      type: 'read',
+      platform: 'web',
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'read'
+    };
+  }
+  
+  // 🔴 Check for generic search tasks
+  if (/查一下|搜索一下|看看|找一下|通用搜索|search/i.test(task)) {
+    return {
+      type: 'search',
+      platform: 'web',
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search'
+    };
   }
   
   // Priority 1: Agent Reach platforms
