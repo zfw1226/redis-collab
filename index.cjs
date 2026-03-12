@@ -199,6 +199,36 @@ async function heartbeat() {
   }
   await redisCmd('RPUSH', 'heartbeat:history:' + AGENT_NAME, new Date(new Date().getTime() + 8*3600000).toISOString());
   await redisCmd('LTRIM', 'heartbeat:history:' + AGENT_NAME, -100, -1);
+  
+  // 清理过期 agent（每10次心跳清理一次）
+  if ((d?.eventCount || 0) % 10 === 0) {
+    await cleanupExpiredAgents();
+  }
+}
+
+// 清理过期 agent
+async function cleanupExpiredAgents() {
+  try {
+    const allAgents = await redisCmd('SMEMBERS', 'agents:all');
+    const now = Date.now();
+    const EXPIRE_THRESHOLD = 5 * 60 * 1000; // 5分钟超时
+    
+    for (const agent of allAgents) {
+      const agentData = await redisCmd('GET', 'agent:' + agent);
+      if (agentData) {
+        const parsed = JSON.parse(agentData);
+        const lastHeartbeat = new Date(parsed.lastHeartbeat).getTime();
+        if (now - lastHeartbeat > EXPIRE_THRESHOLD) {
+          // 标记为 offline
+          parsed.status = 'offline';
+          await redisCmd('SET', 'agent:' + agent, JSON.stringify(parsed));
+          console.log(`[Cleanup] Agent ${agent} marked as offline (no heartbeat > 5min)`);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Cleanup] Failed:', e.message);
+  }
 }
 
 async function logEvent(type, data) {
