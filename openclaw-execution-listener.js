@@ -2,21 +2,21 @@
 /**
  * OpenClaw Execution Listener
  * 
- * 监听 Redis 中的执行任务，调用 OpenClaw 智能体完成
+ * 监听 Redis 中的执行任务，调用 OpenClaw agent 执行任务
  * 运行方式: node openclaw-execution-listener.js
  */
 
 import Redis from 'ioredis';
-import fs from 'fs';
-import path from 'path';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const REDIS_HOST = process.env.REDIS_HOST || '43.131.241.215';
+const REDIS_HOST = process.env.REDIS_HOST || '127.0.0.1';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
-const REDIS_PASSWORD = process.env.REDIS_PASSWORD || 'OpenClaw2026!';
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
 console.log('🔔 OpenClaw Execution Listener Starting...');
 console.log(`Redis: ${REDIS_HOST}:${REDIS_PORT}`);
@@ -43,6 +43,85 @@ subscriber.subscribe('openclaw:execution', (err) => {
   console.log('✅ Subscribed to openclaw:execution channel');
 });
 
+// Function to execute task via openclaw agent
+function executeTaskViaAgent(taskData) {
+  return new Promise((resolve, reject) => {
+    const taskId = taskData.id;
+    const taskContent = taskData.task;
+    const from = taskData.from;
+    
+    console.log(`🚀 Executing task via OpenClaw agent: ${taskId}`);
+    console.log(`📝 Task: ${taskContent.substring(0, 50)}...`);
+    
+    // Build the prompt
+    const prompt = taskContent;
+    
+    // Use openclaw agent with --agent main to use the main agent
+    const args = [
+      'agent',
+      '--agent', 'main',
+      '--message', prompt,
+      '--json',
+      '--timeout', '300'
+    ];
+    
+    console.log(`📞 Running: openclaw ${args.join(' ')}`);
+    
+    const child = spawn('openclaw', args, {
+      cwd: process.env.HOME || '/root',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    
+    let stdout = '';
+    let stderr = '';
+    
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+    
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+    
+    child.on('close', (code) => {
+      console.log(`📬 Agent finished with code: ${code}`);
+      
+      if (stdout) {
+        console.log(`📄 Output: ${stdout.substring(0, 200)}...`);
+      }
+      
+      if (code === 0) {
+        // Try to parse JSON response
+        try {
+          const result = JSON.parse(stdout);
+          resolve({ 
+            success: true, 
+            result: result.message || result.content || stdout.substring(0, 1000),
+            raw: result
+          });
+        } catch (e) {
+          resolve({ 
+            success: true, 
+            result: stdout.substring(0, 1000) 
+          });
+        }
+      } else {
+        console.error(`❌ Error: ${stderr}`);
+        resolve({ 
+          success: false, 
+          error: stderr || 'Unknown error',
+          code 
+        });
+      }
+    });
+    
+    child.on('error', (err) => {
+      console.error(`❌ Failed to spawn: ${err.message}`);
+      resolve({ success: false, error: err.message });
+    });
+  });
+}
+
 // Handle incoming execution requests
 subscriber.on('message', async (channel, message) => {
   console.log(`\n📨 Received message on ${channel}`);
@@ -51,99 +130,49 @@ subscriber.on('message', async (channel, message) => {
     const data = JSON.parse(message);
     const { id, executionKey } = data;
     
+    if (!executionKey) {
+      console.log('⚠️ No executionKey, skipping');
+      return;
+    }
+    
     console.log(`📝 Processing task: ${id}`);
     
     // Get task details from Redis
-    const taskData = await redis.get(executionKey);
-    if (!taskData) {
+    const taskDataStr = await redis.get(executionKey);
+    if (!taskDataStr) {
       console.error(`❌ Task ${id} not found in Redis`);
       return;
     }
     
-    const task = JSON.parse(taskData);
-    console.log(`🎯 Task content: ${task.task.substring(0, 100)}...`);
+    const taskData = JSON.parse(taskDataStr);
+    console.log(`🎯 Task content: ${taskData.task?.substring(0, 50) || 'unknown'}...`);
     
     // Update status to processing
-    task.status = 'processing';
-    await redis.setex(executionKey, 3600, JSON.stringify(task));
+    taskData.status = 'processing';
+    await redis.setex(executionKey, 3600, JSON.stringify(taskData));
     
-    // Write task to a file that OpenClaw can detect
-    // This is a simple way to communicate with the main OpenClaw instance
-    const taskFile = path.join(__dirname, 'pending-tasks', `${id}.json`);
+    // Execute via OpenClaw agent
+    const result = await executeTaskViaAgent(taskData);
     
-    // Ensure directory exists
-    const pendingDir = path.join(__dirname, 'pending-tasks');
-    if (!fs.existsSync(pendingDir)) {
-      fs.mkdirSync(pendingDir, { recursive: true });
+    // Update result
+    taskData.status = result.success ? 'completed' : 'failed';
+    taskData.result = result.result || result.error;
+    taskData.completedAt = new Date().toISOString();
+    
+    await redis.setex(executionKey, 3600, JSON.stringify(taskData));
+    
+    if (result.success) {
+      console.log(`✅ Task ${id} completed successfully`);
+    } else {
+      console.error(`❌ Task ${id} failed: ${result.error}`);
     }
-    
-    // Write task file
-    fs.writeFileSync(taskFile, JSON.stringify({
-      id: id,
-      task: task.task,
-      from: task.from,
-      prompt: task.prompt,
-      executionKey: executionKey,
-      receivedAt: new Date().toISOString()
-    }, null, 2));
-    
-    console.log(`💾 Task saved to: ${taskFile}`);
-    console.log(`⏳ Waiting for OpenClaw to process...`);
-    
-    // The actual execution will be done by the main OpenClaw instance
-    // which monitors this file or is triggered by other means
     
   } catch (error) {
     console.error('❌ Error processing message:', error.message);
   }
 });
 
-// Also poll for pending executions (in case we missed the pub/sub)
-async function pollPendingExecutions() {
-  try {
-    const keys = await redis.keys('execution:*');
-    
-    for (const key of keys) {
-      const data = await redis.get(key);
-      if (data) {
-        const task = JSON.parse(data);
-        if (task.status === 'pending') {
-          console.log(`\n🔍 Found pending task in poll: ${task.id}`);
-          
-          // Trigger the same processing
-          const taskFile = path.join(__dirname, 'pending-tasks', `${task.id}.json`);
-          const pendingDir = path.join(__dirname, 'pending-tasks');
-          
-          if (!fs.existsSync(pendingDir)) {
-            fs.mkdirSync(pendingDir, { recursive: true });
-          }
-          
-          if (!fs.existsSync(taskFile)) {
-            fs.writeFileSync(taskFile, JSON.stringify({
-              id: task.id,
-              task: task.task,
-              from: task.from,
-              prompt: task.prompt,
-              executionKey: key,
-              receivedAt: new Date().toISOString()
-            }, null, 2));
-            
-            console.log(`💾 Task saved to: ${taskFile}`);
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.error('❌ Poll error:', error.message);
-  }
-}
-
-// Poll every 30 seconds
-setInterval(pollPendingExecutions, 30000);
-console.log('🔄 Polling for pending tasks every 30s');
-
-// Initial poll
-pollPendingExecutions();
+console.log('\n✅ OpenClaw Execution Listener is running');
 
 // Handle graceful shutdown
 process.on('SIGINT', () => {
@@ -152,6 +181,3 @@ process.on('SIGINT', () => {
   subscriber.disconnect();
   process.exit(0);
 });
-
-console.log('\n✅ OpenClaw Execution Listener is running');
-console.log('Press Ctrl+C to stop\n');

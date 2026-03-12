@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 const TASK_DATA = process.env.TASK_DATA ? JSON.parse(process.env.TASK_DATA) : null;
 const REDIS_HOST = process.env.REDIS_HOST || '43.131.241.215';
 const REDIS_PORT = process.env.REDIS_PORT || '6379';
-const REDIS_PASSWORD = process.env.REDIS_PASSWORD || 'OpenClaw2026!';
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 const AGENT_NAME = process.env.AGENT_NAME || 'MacStudio-本地';
 
 if (!TASK_DATA) {

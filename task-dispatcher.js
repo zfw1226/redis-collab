@@ -25,7 +25,7 @@ const TASK_EXECUTIONS_DIR = path.join(LOCAL_DATA_DIR, 'task-executions');
 
 const REDIS_HOST = process.env.REDIS_HOST || '43.131.241.215';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
-const REDIS_PASSWORD = process.env.REDIS_PASSWORD || 'OpenClaw2026!';
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
 const redis = new Redis({
   host: REDIS_HOST,

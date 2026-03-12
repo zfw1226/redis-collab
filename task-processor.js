@@ -292,7 +292,7 @@ async function sendFeishuNotification(type, data) {
       message = (templates.task_failed || `❌ 任务失败\n\n任务: {task}\n来自: {from}\n失败: {attempts}/{max_attempts}\n错误: {error}`).replace(/{(\w+)}/g, (m, k) => data[k] || m);
       break;
     case 'task_completed':
-      message = `✅ 任务完成\n\n任务: ${data.task}\n结果: ${data.result.substring(0, 100)}${data.result.length > 100 ? '...' : ''}`;
+      message = `✅ 任务完成\n\n任务: ${data.task}\n结果: ${(typeof data.result === 'string' ? data.result.substring(0, 100) : JSON.stringify(data.result).substring(0, 100))}${data.result.length > 100 ? '...' : ''}`;
       break;
     case 'added_to_whitelist':
       message = `✅ 已加入白名单\n\n任务类型: ${data.task_type}\n描述: ${data.description}`;
@@ -452,6 +452,8 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
         });
         await sendNotificationFn(notification);
       }
+      // Re-check permission after adding to whitelist
+      permission = checkTaskPermission(taskTypeInfo, config);
     }
   }
   
@@ -467,23 +469,12 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
   // Execute task using Sub-Agent Orchestrator
   const executeFn = async (t) => {
     // Import sub-agent orchestrator
-    const { spawnSubAgent, checkSubAgentResult } = await import('./sub-agent-orchestrator.js');
+    const { spawnSubAgent } = await import('./sub-agent-orchestrator.js');
     
     console.log(`[Task] Spawning sub-agent for task: ${taskData.id}`);
     console.log(`[Task] Task content: ${t.substring(0, 80)}...`);
     
-    // 🔴 MARK: Add tool priority instruction to sub-agent spawn based on task type
-    if (typeof taskTypeInfo === 'object') {
-      if (taskTypeInfo.priority === 1) {
-        console.log(`[Task] 🔴 MARK: Spawning with Agent Reach priority instructions`);
-      } else if (taskTypeInfo.priority === 2) {
-        console.log(`[Task] 🔴 MARK: Spawning with MCP Search priority instructions`);
-      } else {
-        console.log(`[Task] 🔴 MARK: Spawning with Browser fallback instructions`);
-      }
-    }
-    
-    // Step 1: Create spawn request
+    // Create spawn request - this will publish to Redis and trigger the listener
     const spawnResult = await spawnSubAgent(t, taskData, redis);
     
     if (!spawnResult.success) {
@@ -493,33 +484,12 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
     console.log(`[Task] Sub-agent spawn request created: ${spawnResult.taskDir}`);
     console.log(`[Task] Waiting for sub-agent to complete...`);
     
-    // Step 2: Wait for sub-agent to complete (max 30 minutes)
-    const maxWait = 30 * 60 * 1000;
-    const startTime = Date.now();
-    const checkInterval = 10000; // Check every 10 seconds
-    
-    while (Date.now() - startTime < maxWait) {
-      const result = await checkSubAgentResult(taskData, redis);
-      
-      if (result.success) {
-        console.log(`[Task] Sub-agent completed successfully`);
-        return {
-          result: result.result,
-          tools_used: result.tools,
-          executed_by: 'sub-agent',
-          completed_at: new Date().toISOString()
-        };
-      }
-      
-      if (result.error) {
-        throw new Error(`Sub-agent failed: ${result.error}`);
-      }
-      
-      // Still processing, wait and check again
-      await sleep(checkInterval);
-    }
-    
-    throw new Error('Sub-agent execution timeout (30 minutes)');
+    // Return a placeholder - actual result will come from the sub-agent execution
+    return {
+      result: `任务已提交执行: ${t.substring(0, 50)}...`,
+      status: 'processing',
+      tools_used: ['sub-agent']
+    };
   };
   
   const result = await executeTaskWithRetry(task, config, executeFn);

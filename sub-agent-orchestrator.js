@@ -67,6 +67,13 @@ export async function spawnSubAgent(task, taskData, redis) {
       spawnedAt: new Date().toISOString()
     }));
     
+    // Publish message to trigger execution listener
+    await redis.publish('openclaw:execution', JSON.stringify({
+      action: 'execute',
+      id: taskData.id,
+      executionKey: executionKey
+    }));
+    
     console.log(`[Sub-Agent Spawner] Task files created in: ${taskDir}`);
     console.log(`[Sub-Agent Spawner] Sub-agent should now be spawned by main agent`);
     

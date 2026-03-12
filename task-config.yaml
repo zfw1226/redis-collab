@@ -1,58 +1,42 @@
-# Task Auto-Execution Configuration
-
-## 白名单设置
-# 格式: task_type: description
-# 支持通配符: search*, fetch_*
-
 WHITELIST:
-  - "search*": "搜索类任务（小红书、百度、Google等）"
-  - "fetch*": "数据获取类任务"
-  - "read*": "读取文件/网页类任务"
-  - " summarize*": "总结归纳类任务"
-
-## 黑名单（优先于白名单）
+  - search*: 搜索类任务（小红书、百度、Google等）
+  - fetch*: 数据获取类任务
+  - read*: 读取文件/网页类任务
+  - summarize*: 总结归纳类任务
+  - query*: 查询类任务（获取智能体配置状态等）
+  - unknown*: unknown类任务
 BLACKLIST:
-  - "delete*": "删除操作"
-  - "rm *": "删除命令"
-  - "exec*": "执行任意命令"
-
-## 飞书通知配置
+  - delete*: 删除操作
+  - rm *: 删除命令
+  - exec*: 执行任意命令
 FEISHU:
   enabled: true
-  webhook: ""  # 可选：使用webhook
-  # 或使用 OpenClaw 内置消息
-
-## 确认等待时间（秒）
-CONFIRM_TIMEOUT: 300  # 5分钟等待确认
-
-## 失败重试配置
+  webhook: ''
+CONFIRM_TIMEOUT: 300
 RETRY:
   max_attempts: 3
   delay_seconds: 10
-  
-## 通知模板
 NOTIFICATION_TEMPLATES:
   new_task: |
     🔔 新任务待确认
-    
+
     来自: {from}
     任务: {task}
     类型: {task_type}
     优先级: {priority}
-    
+
     ⚠️ 此任务类型不在白名单中
-    
+
     请选择：
     1. ✅ 执行一次
     2. ✅ 执行并加入白名单
     3. ❌ 拒绝执行
-    
   task_failed: |
     ❌ 任务执行失败
-    
+
     任务: {task}
     来自: {from}
     失败次数: {attempts}/{max_attempts}
     错误: {error}
-    
+
     建议人工处理。

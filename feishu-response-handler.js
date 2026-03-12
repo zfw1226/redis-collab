@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 const REDIS_CONFIG = {
   host: process.env.REDIS_HOST || '43.131.241.215',
   port: process.env.REDIS_PORT || '6379',
-  password: process.env.REDIS_PASSWORD || 'OpenClaw2026!'
+  password: process.env.REDIS_PASSWORD
 };
 
 const RESPONSE_DIR = '/tmp/feishu-responses';

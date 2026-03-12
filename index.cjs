@@ -54,7 +54,7 @@ async function detectCompute() {
   try {
     const gpu = require('child_process').execSync('nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null')?.toString().trim();
     if (gpu) caps.push(gpu);
-  } catch {}
+  } catch (e) { console.error("[Error]", e.message); }
   return caps;
 }
 
@@ -126,7 +126,7 @@ function loadRoleFiles(dir) {
   const files = ['SOUL.md', 'AGENTS.md', 'USER.md', 'IDENTITY.md', 'TOOLS.md'];
   const result = {};
   for (const f of files) {
-    try { result[f] = readFileSync(join(dir||'/root/.openclaw/workspace', f), 'utf8'); } catch {}
+    try { result[f] = readFileSync(join(dir||'/root/.openclaw/workspace', f), 'utf8'); } catch (e) { console.error("[Error]", e.message); }
   }
   return result;
 }
@@ -155,7 +155,7 @@ async function register(nets, computes, roles, force) {
   
   let parsed = {};
   if (existing && !force) {
-    try { parsed = JSON.parse(existing); } catch {}
+    try { parsed = JSON.parse(existing); } catch (e) { console.error("[Error]", e.message); }
   }
   
   const data = JSON.stringify({
@@ -254,11 +254,11 @@ async function completeTask(taskId, result) {
         const resultData = JSON.stringify({ taskId, from: AGENT_NAME, to: p.from, result, timestamp: new Date(new Date().getTime() + 8*3600000).toISOString() });
         await redisCmd('RPUSH', 'results:' + p.from, resultData);
         await redisCmd('LSET', 'tasks:' + AGENT_NAME, i, JSON.stringify(p));
-        await logEvent('task_completed', { taskId, result: result?.substring(0, 50) });
+        await logEvent('task_completed', { taskId, result: (typeof result === "string" ? result.substring(0, 50) : JSON.stringify(result).substring(0, 50)) });
         await releaseLock('task:' + taskId);
         return '✅ Task ' + taskId + ' completed, result sent to ' + p.from;
       }
-    } catch {}
+    } catch (e) { console.error("[Error]", e.message); }
   }
   return 'Task not found';
 }
@@ -294,7 +294,7 @@ async function startPubSubSubscriber() {
         console.log(`[Pub/Sub] 📥 New task from ${data.from}: ${data.task?.substring(0, 50)}...`);
       } else if (channel === myResultChannel) {
         console.log(`[Pub/Sub] ✅ Result for ${data.taskId} from ${data.from}`);
-        console.log(`[Pub/Sub] Result: ${data.result?.substring(0, 100)}...`);
+        console.log(`[Pub/Sub] Result: ${(typeof data.result === "string" ? data.result.substring(0, 100) : JSON.stringify(data.result).substring(0, 100))}...`);
       }
     } catch (err) {
       console.error('[Pub/Sub] Error:', err.message);
@@ -335,7 +335,7 @@ async function completeTaskWithPubSub(taskId, result) {
           await publishMessage(`result:${p.from}`, { taskId, from: AGENT_NAME, result, timestamp: new Date().toISOString() });
           break;
         }
-      } catch {}
+      } catch (e) { console.error("[Error]", e.message); }
     }
   }
   
@@ -393,7 +393,7 @@ async function retryTask(taskId) {
         await logEvent('task_retried', { taskId, attempt: p.attempts });
         return '✅ Task ' + taskId + ' queued for retry (attempt ' + p.attempts + ')';
       }
-    } catch {}
+    } catch (e) { console.error("[Error]", e.message); }
   }
   return 'Task not found or not in failed state';
 }
@@ -507,6 +507,16 @@ async function startAutoTaskProcessor() {
             const taskData = JSON.parse(taskStr);
             if (taskData.status !== 'pending') continue;
             
+            // Skip if already notified (check Redis)
+            const notifiedKey = `notified:${taskData.id}`;
+            const alreadyNotified = await redisCmd('GET', notifiedKey);
+            if (alreadyNotified) {
+              console.log(`[Auto] Task ${taskData.id} already notified`);
+            } else {
+              // Mark as notified
+              await redisCmd('SET', notifiedKey, '1', 'EX', 3600);
+            }
+            
             console.log(`[Auto] Processing task: ${taskData.id}`);
             
             // Process task with whitelist check
@@ -515,14 +525,60 @@ async function startAutoTaskProcessor() {
               taskData,
               getRedis(),
               async (notification) => {
-                // Send Feishu notification
+                // Send Feishu notification via OpenClaw CLI
                 console.log('[Feishu] ' + notification.substring(0, 100) + '...');
+                try {
+                  const { execSync } = require('child_process');
+                  // Send to current feishu user
+                  execSync(`openclaw message send --message "🔔 ${notification.replace(/"/g, '\\"')}" --target ${process.env.FEISHU_USER_ID || "ou_361e694e501482a6af662457cefbf0d9"}`, { stdio: 'ignore' });
+                  console.log('[Feishu] ✅ Notification sent');
+                } catch (e) {
+                  console.log('[Feishu] ⚠️ Failed to send:', e.message);
+                }
               }
             );
+            
+            // Send result notification via Feishu ONLY when task truly completed (check status and result)
+            const taskKey = `task:${taskData.id}:status`;
+            const prevStatus = await redisCmd('GET', taskKey);
+            const currentStatus = result.success ? 'completed' : (result.reason === 'not_confirmed' ? 'pending_confirm' : 'failed');
+            
+            // Only notify if status changed AND result is not a placeholder
+            const resultStr = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+            const isPlaceholder = resultStr.includes('任务已提交执行') || resultStr.includes('processing');
+            
+            if (prevStatus !== currentStatus && !isPlaceholder) {
+              // Status changed to completed - send notification
+              await redisCmd('SET', taskKey, currentStatus, 'EX', 3600);
+              
+              try {
+                const { execSync } = require('child_process');
+                let resultMsg = '';
+                if (result.success) {
+                  resultMsg = `✅ 任务完成\n\n任务: ${taskData.task}\n结果: ${resultStr.substring(0, 200)}`;
+                } else {
+                  resultMsg = `❌ 任务失败\n\n任务: ${taskData.task}\n原因: ${result.message || result.reason}`;
+                }
+                execSync(`openclaw message send --message "${resultMsg.replace(/"/g, '\\"')}" --target ${process.env.FEISHU_USER_ID || "ou_361e694e501482a6af662457cefbf0d9"}`, { stdio: 'ignore' });
+                console.log('[Feishu] ✅ Result notification sent');
+              } catch (e) {}
+            }
+            
+            // Clean up notified flag
+            if (result.success || result.reason === 'not_confirmed') {
+              await redisCmd('DEL', `notified:${taskData.id}`);
+            }
             
             if (result.success) {
               await completeTask(taskData.id, result.result);
             } else if (result.reason === 'not_confirmed') {
+              // Send confirmation request notification
+              const confirmMsg = `⏳ 任务待确认\n\n任务: ${taskData.task}\n来自: ${taskData.from}\nID: ${taskData.id}\n\n请回复确认执行`;
+              try {
+                const { execSync } = require('child_process');
+                execSync(`openclaw message send --message "${confirmMsg.replace(/"/g, '\\"')}" --target ${process.env.FEISHU_USER_ID || "ou_361e694e501482a6af662457cefbf0d9"}`, { stdio: 'ignore' });
+                console.log('[Feishu] ✅ Confirmation request sent');
+              } catch (e) {}
               console.log(`[Auto] Task ${taskData.id} waiting for confirmation`);
             } else {
               console.log(`[Auto] Task ${taskData.id} failed: ${result.message}`);

@@ -9,7 +9,7 @@ const execAsync = promisify(exec);
 // Redis 配置
 const REDIS_HOST = process.env.REDIS_HOST || '43.131.241.215';
 const REDIS_PORT = process.env.REDIS_PORT || '6379';
-const REDIS_PASSWORD = process.env.REDIS_PASSWORD || 'OpenClaw2026!';
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 const AGENT_NAME = process.env.AGENT_NAME || 'MacStudio-本地';
 
 // 通知队列 key
