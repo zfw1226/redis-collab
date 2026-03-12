@@ -317,14 +317,53 @@ async function startPubSubSubscriber() {
   await subscriber.subscribe(myTaskChannel, myResultChannel);
   console.log(`[Pub/Sub] ✅ Subscribed to: ${myTaskChannel}, ${myResultChannel}`);
   
-  subscriber.on('message', (channel, message) => {
+  subscriber.on('message', async (channel, message) => {
     try {
       const data = JSON.parse(message);
       if (channel === myTaskChannel) {
         console.log(`[Pub/Sub] 📥 New task from ${data.from}: ${data.task?.substring(0, 50)}...`);
+        
+        // 收到新任务 → 立即执行
+        try {
+          const result = await taskProcessor.processTask(
+            data.task,
+            data,
+            getRedis(),
+            async (notification) => {
+              console.log('[Feishu] ' + notification.substring(0, 100));
+            }
+          );
+          
+          // 执行完成 → 返回结果
+          if (result.success) {
+            await completeTask(data.id, result.result);
+            // 通过飞书发送结果给请求方
+            const resultStr = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+            const resultMsg = `✅ 任务完成\n\n任务: ${data.task}\n结果: ${resultStr.substring(0, 200)}`;
+            try {
+              const { execSync } = require('child_process');
+              execSync(`openclaw message send --message "${resultMsg.replace(/"/g, '\\"')}" --target ${data.from}`, { stdio: 'ignore' });
+              console.log('[Feishu] ✅ Result sent to ' + data.from);
+            } catch (e) {}
+          }
+        } catch (e) {
+          console.error('[Pub/Sub] Task execution error:', e.message);
+        }
       } else if (channel === myResultChannel) {
         console.log(`[Pub/Sub] ✅ Result for ${data.taskId} from ${data.from}`);
         console.log(`[Pub/Sub] Result: ${(typeof data.result === "string" ? data.result.substring(0, 100) : JSON.stringify(data.result).substring(0, 100))}...`);
+        
+        // 收到结果 → 转发给请求方（飞书）
+        const resultStr = typeof data.result === "string" ? data.result : JSON.stringify(data.result);
+        const resultMsg = `📥 任务结果\n\n来自: ${data.from}\n结果: ${resultStr.substring(0, 300)}`;
+        try {
+          const { execSync } = require('child_process');
+          // 发送给原始请求方
+          execSync(`openclaw message send --message "${resultMsg.replace(/"/g, '\\"')}" --target ${data.from}`, { stdio: 'ignore' });
+          console.log('[Feishu] ✅ Result forwarded to ' + data.from);
+        } catch (e) {
+          console.log('[Feishu] ⚠️ Failed to forward:', e.message);
+        }
       }
     } catch (err) {
       console.error('[Pub/Sub] Error:', err.message);
