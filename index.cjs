@@ -28,6 +28,9 @@ const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL || '30');
 const TASK_TIMEOUT = parseInt(process.env.TASK_TIMEOUT || '300');
 const LOCK_TIMEOUT = parseInt(process.env.LOCK_TIMEOUT || '60');
 
+// ✅ 任务优先级验证
+const VALID_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
+
 async function redisCmd(...args) {
   const r = getRedis();
   const cmd = args[0].toUpperCase();
@@ -262,7 +265,12 @@ async function releaseLock(resource, owner) {
 }
 
 async function sendTask(to, task, priority) {
+  // ✅ 优先级验证，默认 normal
   priority = priority || 'normal';
+  if (!VALID_PRIORITIES.includes(priority)) {
+    priority = 'normal';
+  }
+  
   const id = crypto.randomBytes(4).toString('hex');
   const taskData = { id, from: AGENT_NAME, to, task, priority, timestamp: new Date(new Date().getTime() + 8*3600000).toISOString(), status: 'pending', attempts: 0, result: null };
   
@@ -274,6 +282,55 @@ async function sendTask(to, task, priority) {
   
   await logEvent('task_sent', { id, to, task: task.substring(0, 50) });
   return '✅ Task to ' + to + ': ' + task + '\nID: ' + id + '\nPriority: ' + priority;
+}
+
+// ✅ 任务拒绝功能
+async function rejectTask(taskId, reason) {
+  const tasks = await redisCmd('LRANGE', 'tasks:' + AGENT_NAME, '0', '99');
+  if (!tasks) return 'No tasks';
+  const list = tasks.split('\n').filter(x => x);
+  for (let i = 0; i < list.length; i++) {
+    try {
+      const p = JSON.parse(list[i]);
+      if (p.id === taskId) {
+        p.status = 'rejected';
+        p.rejectReason = reason;
+        p.rejectedAt = new Date(new Date().getTime() + 8*3600000).toISOString();
+        
+        // 通知任务发送方被拒绝
+        const rejectData = JSON.stringify({ 
+          taskId, 
+          from: AGENT_NAME, 
+          to: p.from, 
+          result: { error: 'Task rejected', reason },
+          timestamp: new Date(new Date().getTime() + 8*3600000).toISOString() 
+        });
+        await redisCmd('RPUSH', 'results:' + p.from, rejectData);
+        await redisCmd('LSET', 'tasks:' + AGENT_NAME, i, JSON.stringify(p));
+        await releaseLock('task:' + taskId);
+        
+        // ✅ 清理任务目录资源
+        await cleanupTaskFiles(taskId);
+        
+        await logEvent('task_rejected', { taskId, reason });
+        return '✅ Task ' + taskId + ' rejected, notification sent to ' + p.from;
+      }
+    } catch (e) { console.error("[Error]", e.message); }
+  }
+  return 'Task not found';
+}
+
+// ✅ 任务文件清理
+async function cleanupTaskFiles(taskId) {
+  const taskDir = path.join(os.homedir(), '.openclaw', 'workspace', '.local', 'redis-collab', 'task-executions', taskId);
+  try {
+    if (fs.existsSync(taskDir)) {
+      fs.rmSync(taskDir, { recursive: true, force: true });
+      console.log(`[Cleanup] Task files cleaned: ${taskId}`);
+    }
+  } catch (e) {
+    console.error('[Cleanup] Failed to clean task files:', e.message);
+  }
 }
 
 async function completeTask(taskId, result) {
@@ -292,6 +349,8 @@ async function completeTask(taskId, result) {
         await redisCmd('LSET', 'tasks:' + AGENT_NAME, i, JSON.stringify(p));
         await logEvent('task_completed', { taskId, result: (typeof result === "string" ? result.substring(0, 50) : JSON.stringify(result).substring(0, 50)) });
         await releaseLock('task:' + taskId);
+        // ✅ 清理任务目录资源
+        await cleanupTaskFiles(taskId);
         return '✅ Task ' + taskId + ' completed, result sent to ' + p.from;
       }
     } catch (e) { console.error("[Error]", e.message); }
@@ -381,6 +440,11 @@ async function startPubSubSubscriber() {
 
 // 🔴 Pub/Sub: Send task with notification
 async function sendTaskWithPubSub(to, task, priority = 'normal') {
+  // ✅ 优先级验证
+  if (!VALID_PRIORITIES.includes(priority)) {
+    priority = 'normal';
+  }
+  
   const id = crypto.randomBytes(4).toString('hex');
   const taskData = { id, from: AGENT_NAME, to, task, priority, timestamp: new Date().toISOString(), status: 'pending', attempts: 0, result: null };
   
@@ -501,6 +565,18 @@ async function find(cap, type) {
 async function shareMemory(content) {
   const id = crypto.randomBytes(4).toString('hex');
   
+  // ✅ 记忆去重：计算内容哈希
+  const contentHash = crypto.createHash('sha256').update(content).digest('hex').substring(0, 16);
+  
+  // 检查是否已存在相同内容
+  const existingHashes = await redisCmd('LRANGE', 'memory:hashes', '0', '-1');
+  if (existingHashes && existingHashes.includes(contentHash)) {
+    return '⚠️ Memory already exists (deduplicated)';
+  }
+  
+  // 记录哈希值用于去重
+  await redisCmd('RPUSH', 'memory:hashes', contentHash);
+  
   // Check if content is a file path
   let fileInfo = null;
   if (content.startsWith('/') || content.startsWith('./') || content.startsWith('~')) {
@@ -548,10 +624,11 @@ const skills = {
   'redis-register': { description: 'Register this agent', params: [{ name: 'network', type: 'string', required: false }, { name: 'compute', type: 'string', required: false }, { name: 'role', type: 'string', required: false }], handler: async function(args) { return register(args.network, args.compute, args.role); } },
   'redis-tasks': { description: 'Get my tasks', handler: async function() { return getMyTasks(); } },
   'redis-results': { description: 'Get results sent to me', handler: async function() { return getResults(); } },
-  'redis-send': { description: 'Send task', params: [{ name: 'to', type: 'string', required: true }, { name: 'task', type: 'string', required: true }, { name: 'priority', type: 'string', required: false }], handler: async function(args) { return sendTask(args.to, args.task, args.priority||'normal'); } },
+  'redis-send': { description: 'Send task (supports priority: low/normal/high/urgent)', params: [{ name: 'to', type: 'string', required: true }, { name: 'task', type: 'string', required: true }, { name: 'priority', type: 'string', required: false }], handler: async function(args) { return sendTask(args.to, args.task, args.priority||'normal'); } },
+  'redis-reject': { description: 'Reject task with reason', params: [{ name: 'taskId', type: 'string', required: true }, { name: 'reason', type: 'string', required: true }], handler: async function(args) { return rejectTask(args.taskId, args.reason); } },
   'redis-complete': { description: 'Complete task with result', params: [{ name: 'taskId', type: 'string', required: true }, { name: 'result', type: 'string', required: true }], handler: async function(args) { return completeTask(args.taskId, args.result); } },
   'redis-retry': { description: 'Retry failed task', params: [{ name: 'taskId', type: 'string', required: true }], handler: async function(args) { return retryTask(args.taskId); } },
-  'redis-memory': { description: 'Share memory', params: [{ name: 'content', type: 'string', required: true }], handler: async function(args) { return shareMemory(args.content); } },
+  'redis-memory': { description: 'Share memory (auto-deduplicate)', params: [{ name: 'content', type: 'string', required: true }], handler: async function(args) { return shareMemory(args.content); } },
   'redis-memories': { description: 'View memories', params: [{ name: 'limit', type: 'number', required: false }], handler: async function(args) { return memories(args.limit); } },
   'redis-history': { description: 'View global history', params: [{ name: 'limit', type: 'number', required: false }], handler: async function(args) { return getHistory(args.limit); } },
   'redis-status': { description: 'Get my status', handler: async function() { const d = await redisCmd('GET', 'agent:'+AGENT_NAME); return d ? JSON.stringify(JSON.parse(d), null, 2) : 'Not registered'; } }
