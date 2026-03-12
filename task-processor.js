@@ -189,20 +189,19 @@ async function executeTaskWithRetry(task, config, executeFn) {
 }
 
 // Main task processor
-async function processTask(task, taskData) {
+async function processTask(task, taskData, redisInstance, sendNotificationFn) {
   const config = loadConfig();
   const taskType = detectTaskType(task);
   const permission = checkTaskPermission(taskType, config);
   
   console.log(`[Task] Type detected: ${taskType}, Allowed: ${permission.allowed}`);
   
-  // Import OpenClaw bridge (Redis-based, not direct Feishu)
-  const { sendTaskConfirmation, waitForConfirmation, sendTaskCompleteNotification } = 
-    await import('./openclaw-bridge.js');
+  // Import Feishu notifier
+  const { sendTaskConfirmation, waitForConfirmation } = await import('./feishu-notifier.js');
   
   // If not allowed and requires confirmation
   if (!permission.allowed && permission.requiresConfirm) {
-    // Send confirmation via Redis bridge (OpenClaw will send to Feishu)
+    // Send Feishu confirmation request
     const confirmId = await sendTaskConfirmation({
       ...taskData,
       taskType
@@ -323,8 +322,23 @@ async function processTask(task, taskData) {
   
   const result = await executeTaskWithRetry(task, config, executeFn);
   
-  // Send completion/failure notification via OpenClaw bridge
-  await sendTaskCompleteNotification(taskData, result);
+  // Send completion/failure notification
+  if (result.success) {
+    const notification = await sendFeishuNotification('task_completed', {
+      task: task.substring(0, 50),
+      result: result.result
+    });
+    if (sendNotificationFn) await sendNotificationFn(notification);
+  } else {
+    const notification = await sendFeishuNotification('task_failed', {
+      task: task.substring(0, 50),
+      from: taskData.from,
+      attempts: result.attempts,
+      max_attempts: config.RETRY?.max_attempts || 3,
+      error: result.error
+    });
+    if (sendNotificationFn) await sendNotificationFn(notification);
+  }
   
   return result;
 }
