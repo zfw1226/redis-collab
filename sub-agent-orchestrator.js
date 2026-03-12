@@ -8,7 +8,7 @@ import fs from 'fs';
 import os from 'os';
 
 // Import completeTask from index.cjs (CommonJS module)
-import { completeTask } from './index.cjs';
+import { completeTaskWithPubSub } from './index.cjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -401,13 +401,13 @@ export async function checkSubAgentResult(taskData, redis) {
       completedAt: new Date().toISOString()
     }));
     
-    // 🔴 重要：调用 completeTask 将结果发送回原始发送方
+    // 🔴 重要：调用 completeTaskWithPubSub 将结果发送回原始发送方（含 Pub/Sub 通知）
     try {
-      console.log(`[Sub-Agent] Sending result back to ${taskData.from} via completeTask...`);
-      await completeTask(taskData.id, result);
-      console.log(`[Sub-Agent] Result sent successfully to ${taskData.from}`);
+      console.log(`[Sub-Agent] Sending result back to ${taskData.from} via Pub/Sub...`);
+      await completeTaskWithPubSub(taskData.id, result);
+      console.log(`[Sub-Agent] ✅ Result sent successfully to ${taskData.from}`);
     } catch (err) {
-      console.error(`[Sub-Agent] Failed to send result: ${err.message}`);
+      console.error(`[Sub-Agent] ❌ Failed to send result: ${err.message}`);
     }
     
     return {

@@ -263,6 +263,85 @@ async function completeTask(taskId, result) {
   return 'Task not found';
 }
 
+// 🔴 Pub/Sub: Publish message to channel
+async function publishMessage(channel, message) {
+  const r = getRedis();
+  const msg = typeof message === 'string' ? message : JSON.stringify(message);
+  await r.publish(channel, msg);
+  console.log(`[Pub/Sub] 📢 Published to ${channel}`);
+}
+
+// 🔴 Pub/Sub: Subscribe and handle messages
+async function startPubSubSubscriber() {
+  const Redis = require('ioredis');
+  const subscriber = new Redis({
+    host: process.env.REDIS_HOST,
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    password: process.env.REDIS_PASSWORD
+  });
+  
+  // Subscribe to my task channel and result channel
+  const myTaskChannel = `new-task:${AGENT_NAME}`;
+  const myResultChannel = `result:${AGENT_NAME}`;
+  
+  await subscriber.subscribe(myTaskChannel, myResultChannel);
+  console.log(`[Pub/Sub] ✅ Subscribed to: ${myTaskChannel}, ${myResultChannel}`);
+  
+  subscriber.on('message', (channel, message) => {
+    try {
+      const data = JSON.parse(message);
+      if (channel === myTaskChannel) {
+        console.log(`[Pub/Sub] 📥 New task from ${data.from}: ${data.task?.substring(0, 50)}...`);
+      } else if (channel === myResultChannel) {
+        console.log(`[Pub/Sub] ✅ Result for ${data.taskId} from ${data.from}`);
+        console.log(`[Pub/Sub] Result: ${data.result?.substring(0, 100)}...`);
+      }
+    } catch (err) {
+      console.error('[Pub/Sub] Error:', err.message);
+    }
+  });
+  
+  return subscriber;
+}
+
+// 🔴 Pub/Sub: Send task with notification
+async function sendTaskWithPubSub(to, task, priority = 'normal') {
+  const id = crypto.randomBytes(4).toString('hex');
+  const taskData = { id, from: AGENT_NAME, to, task, priority, timestamp: new Date().toISOString(), status: 'pending', attempts: 0, result: null };
+  
+  // 1. Add to queue (persistence)
+  await redisCmd('RPUSH', 'tasks:' + to, JSON.stringify(taskData));
+  
+  // 2. Publish Pub/Sub notification (real-time)
+  await publishMessage(`new-task:${to}`, taskData);
+  
+  await logEvent('task_sent', { id, to, task: task.substring(0, 50) });
+  return '✅ Task sent to ' + to + ' (with Pub/Sub notification)\nID: ' + id;
+}
+
+// 🔴 Pub/Sub: Complete task with notification
+async function completeTaskWithPubSub(taskId, result) {
+  // First complete normally
+  const completionResult = await completeTask(taskId, result);
+  
+  // Then publish Pub/Sub notification
+  const tasks = await redisCmd('LRANGE', 'tasks:' + AGENT_NAME, '0', '99');
+  if (tasks) {
+    const list = tasks.split('\n').filter(x => x);
+    for (const t of list) {
+      try {
+        const p = JSON.parse(t);
+        if (p.id === taskId) {
+          await publishMessage(`result:${p.from}`, { taskId, from: AGENT_NAME, result, timestamp: new Date().toISOString() });
+          break;
+        }
+      } catch {}
+    }
+  }
+  
+  return completionResult;
+}
+
 async function getResults() {
   const results = await redisCmd('LRANGE', 'results:' + AGENT_NAME, '0', '99');
   if (!results) return 'No results';
@@ -500,16 +579,20 @@ if (require.main === module) {
     register().then(r => console.log(r));
     setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_INTERVAL * 1000);
   } else if (cmd === '--auto') {
-    // Daemon mode with auto task processing
-    console.log('💓 Heartbeat + Auto Task Processor for ' + AGENT_NAME);
+    // Daemon mode with auto task processing + Pub/Sub
+    console.log('💓 Heartbeat + Auto Task Processor + Pub/Sub for ' + AGENT_NAME);
     register().then(r => console.log(r));
     setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_INTERVAL * 1000);
     startAutoTaskProcessor();
+    startPubSubSubscriber(); // 🔴 Start Pub/Sub subscriber
   } else if (cmd === 'agents') listAgents(args.includes('--detailed')).then(console.log).catch(e=>console.error(e.message));
   else if (cmd === 'find') find(args[1], args[2]||'all').then(console.log).catch(e=>console.error(e.message));
   else if (cmd === 'register') register(args[1], args[2], args[3]).then(r => console.log(r)).catch(e=>console.error(e.message));
   else if (cmd === 'send') sendTask(args[1], args.slice(2).join(' ')).then(console.log).catch(e=>console.error(e.message));
+  else if (cmd === 'send-pubsub') sendTaskWithPubSub(args[1], args.slice(2).join(' ')).then(console.log).catch(e=>console.error(e.message));
   else if (cmd === 'complete') completeTask(args[1], args.slice(2).join(' ')).then(console.log).catch(e=>console.error(e.message));
+  else if (cmd === 'complete-pubsub') completeTaskWithPubSub(args[1], args.slice(2).join(' ')).then(console.log).catch(e=>console.error(e.message));
+  else if (cmd === 'subscribe') startPubSubSubscriber().then(() => console.log('Subscribed. Waiting for messages...')).catch(e=>console.error(e.message));
   else if (cmd === 'tasks') getMyTasks().then(console.log).catch(e=>console.error(e.message));
   else if (cmd === 'results') getResults().then(console.log).catch(e=>console.error(e.message));
   else if (cmd === 'memories') memories().then(console.log).catch(e=>console.error(e.message));
@@ -521,9 +604,9 @@ if (require.main === module) {
     register().then(r => console.log(r));
     setInterval(() => heartbeat().catch(() => {}), HEARTBEAT_INTERVAL * 1000);
   } else {
-    console.log('Commands: agents [--detailed], find <cap>, register, send <to> <task>, complete <id> <result>, tasks, results, memories, history, status, --heartbeat, --auto');
+    console.log('Commands: agents [--detailed], find <cap>, register, send <to> <task>, send-pubsub <to> <task>, complete <id> <result>, complete-pubsub <id> <result>, subscribe, tasks, results, memories, history, status, --heartbeat, --auto');
     process.exit(1);
   }
 }
 
-module.exports = { skills, completeTask };
+module.exports = { skills, completeTask, publishMessage, startPubSubSubscriber, sendTaskWithPubSub, completeTaskWithPubSub };
