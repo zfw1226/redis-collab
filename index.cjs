@@ -568,7 +568,7 @@ async function startAutoTaskProcessor() {
               }
             );
             
-            // Send result notification via Feishu ONLY when task truly completed (check status and result)
+            // Send result notification via Feishu - send to task sender (taskData.from)
             const taskKey = `task:${taskData.id}:status`;
             const prevStatus = await redisCmd('GET', taskKey);
             const currentStatus = result.success ? 'completed' : (result.reason === 'not_confirmed' ? 'pending_confirm' : 'failed');
@@ -578,7 +578,7 @@ async function startAutoTaskProcessor() {
             const isPlaceholder = resultStr.includes('任务已提交执行') || resultStr.includes('processing');
             
             if (prevStatus !== currentStatus && !isPlaceholder) {
-              // Status changed to completed - send notification
+              // Status changed to completed - send notification to requester
               await redisCmd('SET', taskKey, currentStatus, 'EX', 3600);
               
               try {
@@ -589,8 +589,10 @@ async function startAutoTaskProcessor() {
                 } else {
                   resultMsg = `❌ 任务失败\n\n任务: ${taskData.task}\n原因: ${result.message || result.reason}`;
                 }
-                execSync(`openclaw message send --message "${resultMsg.replace(/"/g, '\\"')}" --target ${process.env.FEISHU_USER_ID || "ou_361e694e501482a6af662457cefbf0d9"}`, { stdio: 'ignore' });
-                console.log('[Feishu] ✅ Result notification sent');
+                // Send to the requester (from), not to current user
+                const targetUser = taskData.from || process.env.FEISHU_USER_ID;
+                execSync(`openclaw message send --message "${resultMsg.replace(/"/g, '\\"')}" --target ${targetUser}`, { stdio: 'ignore' });
+                console.log('[Feishu] ✅ Result notification sent to ' + targetUser);
               } catch (e) {}
             }
             

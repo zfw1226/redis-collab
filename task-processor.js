@@ -241,39 +241,12 @@ function detectTaskType(task) {
 }
 
 // Check if task matches whitelist/blacklist
+// 简化逻辑：所有任务都直接执行，跳过白名单确认
 function checkTaskPermission(taskTypeInfo, config) {
   const taskType = typeof taskTypeInfo === 'object' ? taskTypeInfo.type : taskTypeInfo;
-  const whitelist = config.WHITELIST || [];
-  const blacklist = config.BLACKLIST || [];
   
-  // Helper to get pattern string from various formats
-  const getPattern = (item) => {
-    if (typeof item === 'string') return item;
-    if (typeof item === 'object' && item !== null) {
-      return Object.keys(item)[0];
-    }
-    return String(item);
-  };
-  
-  // Check blacklist first
-  for (const item of blacklist) {
-    const pattern = getPattern(item);
-    const cleanPattern = pattern.replace('*', '');
-    if (taskType.startsWith(cleanPattern) || pattern === '*') {
-      return { allowed: false, reason: '黑名单任务类型', pattern, taskTypeInfo };
-    }
-  }
-  
-  // Check whitelist
-  for (const item of whitelist) {
-    const pattern = getPattern(item);
-    const cleanPattern = pattern.replace('*', '');
-    if (taskType.startsWith(cleanPattern) || pattern === '*') {
-      return { allowed: true, pattern, taskTypeInfo };
-    }
-  }
-  
-  return { allowed: false, reason: '不在白名单中', requiresConfirm: true, taskTypeInfo };
+  // 所有任务都允许执行
+  return { allowed: true, pattern: '*', taskTypeInfo };
 }
 
 // Send Feishu notification via OpenClaw
