@@ -2,7 +2,7 @@
   "name": "redis-collab",
   "version": "1.0.0",
   "description": "Redis collaboration skill for OpenClaw",
-  "main": "index.js",
+  "main": "index.cjs",
   "type": "module",
   "dependencies": {
     "ioredis": "^5.10.0",
