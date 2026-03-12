@@ -32,28 +32,155 @@ function getDefaultConfig() {
   };
 }
 
-// Task type detection
-// NOTE: 小红书相关任务优先通过 Agent Reach 执行
-// 原因：小红书需要登录，且 Agent Reach 更适合处理社交媒体内容
+// Task type detection with Tool Priority Strategy
+// PRIORITY ORDER:
+// 1. Agent Reach (社交平台: 小红书, Twitter, Instagram, YouTube 等)
+// 2. MCP Search (Tavily/MiniMax)
+// 3. Browser (最后备选)
 function detectTaskType(task) {
   const lowerTask = task.toLowerCase();
   
-  // Check for 小红书/Xiaohongshu tasks - mark for Agent Reach priority
+  // 🔴 PRIORITY 1: Agent Reach platforms (social media)
+  // 小红书/Xiaohongshu
   if (/小红书|xiaohongshu|xhs/i.test(task)) {
-    return { type: 'search', platform: 'xiaohongshu', useAgentReach: true };
+    return { 
+      type: 'search', 
+      platform: 'xiaohongshu', 
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search-xhs'
+    };
   }
   
-  // Search patterns
-  if (/搜索|查找|search|find|query/i.test(lowerTask)) return { type: 'search', useAgentReach: false };
-  if (/获取|fetch|get|download/i.test(lowerTask)) return { type: 'fetch', useAgentReach: false };
-  if (/读取|read|open/i.test(lowerTask)) return { type: 'read', useAgentReach: false };
-  if (/总结|summarize|归纳|summary/i.test(lowerTask)) return { type: 'summarize', useAgentReach: false };
-  if (/分析|analyze|analysis/i.test(lowerTask)) return { type: 'analyze', useAgentReach: false };
-  if (/生成|create|生成|write/i.test(lowerTask)) return { type: 'create', useAgentReach: false };
-  if (/删除|delete|remove|rm /i.test(lowerTask)) return { type: 'delete', useAgentReach: false };
-  if (/执行|exec|run|command/i.test(lowerTask)) return { type: 'exec', useAgentReach: false };
+  // Twitter/X
+  if (/twitter|x.*平台|推特/i.test(task)) {
+    return { 
+      type: 'search', 
+      platform: 'twitter', 
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search-twitter'
+    };
+  }
   
-  return { type: 'unknown', useAgentReach: false };
+  // Instagram
+  if (/instagram|ins|ig/i.test(task)) {
+    return { 
+      type: 'search', 
+      platform: 'instagram', 
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search-instagram'
+    };
+  }
+  
+  // YouTube
+  if (/youtube|油管/i.test(task)) {
+    return { 
+      type: 'search', 
+      platform: 'youtube', 
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search-youtube'
+    };
+  }
+  
+  // Bilibili/B站
+  if (/bilibili|b站|哔哩哔哩/i.test(task)) {
+    return { 
+      type: 'search', 
+      platform: 'bilibili', 
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search-bilibili'
+    };
+  }
+  
+  // GitHub
+  if (/github|git.*hub/i.test(task)) {
+    return { 
+      type: 'search', 
+      platform: 'github', 
+      priority: 1,
+      tool: 'agent-reach',
+      toolCommand: 'search-github'
+    };
+  }
+  
+  // 🔴 PRIORITY 2: MCP Search (general web search)
+  // 一般搜索任务使用 Tavily/MiniMax MCP
+  if (/搜索|查找|search|find|query|查.*信息/i.test(lowerTask)) {
+    return { 
+      type: 'search', 
+      platform: 'web',
+      priority: 2,
+      tool: 'mcp-search',
+      toolCommand: 'tavily/minimax'
+    };
+  }
+  
+  // 🔴 PRIORITY 3: Browser (specific websites or fallback)
+  if (/获取|fetch|get|download/i.test(lowerTask)) {
+    return { 
+      type: 'fetch', 
+      priority: 3,
+      tool: 'browser'
+    };
+  }
+  
+  if (/读取|read|open/i.test(lowerTask)) {
+    return { 
+      type: 'read', 
+      priority: 3,
+      tool: 'browser'
+    };
+  }
+  
+  if (/总结|summarize|归纳|summary/i.test(lowerTask)) {
+    return { 
+      type: 'summarize', 
+      priority: 3,
+      tool: 'browser'
+    };
+  }
+  
+  if (/分析|analyze|analysis/i.test(lowerTask)) {
+    return { 
+      type: 'analyze', 
+      priority: 3,
+      tool: 'browser'
+    };
+  }
+  
+  if (/生成|create|生成|write/i.test(lowerTask)) {
+    return { 
+      type: 'create', 
+      priority: 3,
+      tool: 'browser'
+    };
+  }
+  
+  if (/删除|delete|remove|rm /i.test(lowerTask)) {
+    return { 
+      type: 'delete', 
+      priority: 3,
+      tool: 'browser'
+    };
+  }
+  
+  if (/执行|exec|run|command/i.test(lowerTask)) {
+    return { 
+      type: 'exec', 
+      priority: 3,
+      tool: 'browser'
+    };
+  }
+  
+  return { 
+    type: 'unknown', 
+    priority: 3,
+    tool: 'browser'
+  };
 }
 
 // Check if task matches whitelist/blacklist
@@ -214,14 +341,20 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
   const taskType = typeof taskTypeInfo === 'object' ? taskTypeInfo.type : taskTypeInfo;
   const permission = checkTaskPermission(taskTypeInfo, config);
   
-  console.log(`[Task] Type detected: ${taskType}, Allowed: ${permission.allowed}`);
+  console.log(`[Task] Type detected: ${taskType}, Priority: ${taskTypeInfo.priority}, Tool: ${taskTypeInfo.tool || 'auto'}`);
   
-  // 🔴 MARK: 小红书任务优先通过 Agent Reach 执行
-  if (typeof taskTypeInfo === 'object' && taskTypeInfo.useAgentReach) {
-    console.log(`[Task] 🔴 MARK: ${taskTypeInfo.platform} task detected - recommend using Agent Reach`);
-    console.log(`[Task] Platform: ${taskTypeInfo.platform}, Priority: Agent Reach > Browser`);
-    // Note: This is logged but execution continues through normal flow
-    // The sub-agent prompt should be configured to use Agent Reach for these tasks
+  // 🔴 MARK: Tool Priority Strategy
+  // Priority 1: Agent Reach (社交平台)
+  // Priority 2: MCP Search (Tavily/MiniMax)
+  // Priority 3: Browser (备选)
+  if (typeof taskTypeInfo === 'object') {
+    if (taskTypeInfo.priority === 1) {
+      console.log(`[Task] 🔴 MARK: Priority 1 - Use Agent Reach (${taskTypeInfo.toolCommand})`);
+    } else if (taskTypeInfo.priority === 2) {
+      console.log(`[Task] 🔴 MARK: Priority 2 - Use MCP Search (tavily/minimax)`);
+    } else {
+      console.log(`[Task] 🔴 MARK: Priority 3 - Use Browser (fallback)`);
+    }
   }
   
   // If not allowed and requires confirmation
@@ -283,9 +416,15 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
     console.log(`[Task] Spawning sub-agent for task: ${taskData.id}`);
     console.log(`[Task] Task content: ${t.substring(0, 80)}...`);
     
-    // 🔴 MARK: Add Agent Reach recommendation to prompt if 小红书 task
-    if (typeof taskTypeInfo === 'object' && taskTypeInfo.useAgentReach) {
-      console.log(`[Task] 🔴 MARK: Adding Agent Reach instruction to sub-agent prompt`);
+    // 🔴 MARK: Add tool priority instruction to sub-agent spawn based on task type
+    if (typeof taskTypeInfo === 'object') {
+      if (taskTypeInfo.priority === 1) {
+        console.log(`[Task] 🔴 MARK: Spawning with Agent Reach priority instructions`);
+      } else if (taskTypeInfo.priority === 2) {
+        console.log(`[Task] 🔴 MARK: Spawning with MCP Search priority instructions`);
+      } else {
+        console.log(`[Task] 🔴 MARK: Spawning with Browser fallback instructions`);
+      }
     }
     
     // Step 1: Create spawn request

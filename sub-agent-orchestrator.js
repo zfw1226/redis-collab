@@ -77,25 +77,65 @@ export async function spawnSubAgent(task, taskData, redis) {
 
 /**
  * 构建给 Sub-Agent 的系统提示词
+ * 根据任务类型和工具优先级策略生成
  */
 function buildSubAgentPrompt(task, taskData) {
-  // 🔴 MARK: 检测是否是 小红书/Xiaohongshu 任务
-  const isXiaohongshu = /小红书|xiaohongshu|xhs/i.test(task);
+  // 检测任务类型
+  const taskTypeInfo = detectTaskTypeForPrompt(task);
   
-  let platformSpecificInstructions = '';
+  let toolPriorityInstructions = '';
   
-  if (isXiaohongshu) {
-    platformSpecificInstructions = `
-🔴 IMPORTANT MARK: 小红书任务执行指南
-本任务涉及小红书平台，请按以下优先级选择工具：
-1. 【首选】使用 Agent Reach 技能 (ara search-xhs) 搜索小红书内容
-   - Agent Reach 更适合处理社交媒体内容
-   - 可以绕过登录限制
-   - 命令格式: ara search-xhs "关键词"
-2. 【备选】使用 browser 访问小红书网页版（可能需要登录）
-3. 【备选】使用 web_search 搜索小红书相关内容
+  // 🔴 根据优先级生成工具选择指南
+  if (taskTypeInfo.priority === 1) {
+    // Agent Reach 优先
+    toolPriorityInstructions = `
+🔴 TOOL PRIORITY: Agent Reach (Priority 1)
+本任务涉及 ${taskTypeInfo.platform} 平台，请优先使用 Agent Reach 技能：
 
-执行前请先检查是否可以使用 Agent Reach 技能。`;
+【首选工具】Agent Reach
+命令格式: ara ${taskTypeInfo.toolCommand} "搜索关键词"
+示例: ara ${taskTypeInfo.toolCommand} "${extractKeywords(task)}"
+
+优势:
+- 专门为 ${taskTypeInfo.platform} 优化
+- 可绕过登录限制
+- 更适合社交媒体内容抓取
+
+如果 Agent Reach 失败，再考虑:
+- 【备选1】MCP Search (tavily/minimax)
+- 【备选2】Browser 直接访问`;
+  } else if (taskTypeInfo.priority === 2) {
+    // MCP Search 优先
+    toolPriorityInstructions = `
+🔴 TOOL PRIORITY: MCP Search (Priority 2)
+本任务适合使用 MCP Search 工具：
+
+【首选工具】MCP Search
+- Tavily MCP: mcporter call tavily.tavily_search query="关键词"
+- MiniMax MCP: mcporter call minimax-coding.web_search query="关键词"
+
+优势:
+- 快速获取全网信息
+- 结构化搜索结果
+- 支持多种搜索参数
+
+如果 MCP Search 结果不足，再考虑:
+- 【备选1】Browser 访问具体网站
+- 【备选2】Agent Reach (如果涉及社交平台)`;
+  } else {
+    // Browser 优先
+    toolPriorityInstructions = `
+🔴 TOOL PRIORITY: Browser (Priority 3)
+本任务需要使用 Browser 工具：
+
+【首选工具】Browser
+- 访问具体网页
+- 点击、填写表单
+- 提取页面内容
+
+如果 Browser 遇到限制（如需要登录），再考虑:
+- 【备选1】MCP Search 获取相关信息
+- 【备选2】Agent Reach (如果涉及社交平台)`;
   }
   
   return `你是一个任务执行智能体，专门负责完成具体的执行工作。
@@ -104,24 +144,72 @@ function buildSubAgentPrompt(task, taskData) {
 - 任务ID: ${taskData.id}
 - 来源: ${taskData.from}
 - 优先级: ${taskData.priority || 'normal'}
+- 任务类型: ${taskTypeInfo.type}
+- 推荐平台: ${taskTypeInfo.platform || 'general'}
 - 任务内容: ${task}
-${platformSpecificInstructions}
 
-【执行要求】
+【工具选择优先级指南】${toolPriorityInstructions}
+
+【通用执行要求】
 1. 仔细分析任务需求
-2. 自动选择合适的工具完成任务
-3. 如果需要搜索，使用 web_search
-4. 如果需要访问网页，使用 browser
-5. 如果需要处理文档，使用 feishu_doc 或 docx 技能
-6. 保存执行结果到 task.txt.result 文件
-7. 完成后退出
+2. 按照上述优先级选择合适的工具
+3. 如果首选工具失败，按顺序尝试备选工具
+4. 记录实际使用的工具
+5. 保存执行结果到 task.txt.result 文件
+6. 完成后退出
 
 【输出要求】
 - 执行结果保存到: task.txt.result
-- 使用JSON格式记录使用的工具: tools.json
+- 使用JSON格式记录使用的工具: tools.json (格式: {"tools": ["tool1"], "priority": 1})
 - 简要执行日志: execution.log
 
-请立即开始执行任务。`;
+请立即开始执行任务，优先使用推荐的工具！`;
+}
+
+/**
+ * 为提示词检测任务类型
+ */
+function detectTaskTypeForPrompt(task) {
+  const lowerTask = task.toLowerCase();
+  
+  // Priority 1: Agent Reach platforms
+  if (/小红书|xiaohongshu|xhs/i.test(task)) {
+    return { type: 'search', platform: 'xiaohongshu', priority: 1, tool: 'agent-reach', toolCommand: 'search-xhs' };
+  }
+  if (/twitter|x.*平台|推特/i.test(task)) {
+    return { type: 'search', platform: 'twitter', priority: 1, tool: 'agent-reach', toolCommand: 'search-twitter' };
+  }
+  if (/instagram|ins|ig/i.test(task)) {
+    return { type: 'search', platform: 'instagram', priority: 1, tool: 'agent-reach', toolCommand: 'search-instagram' };
+  }
+  if (/youtube|油管/i.test(task)) {
+    return { type: 'search', platform: 'youtube', priority: 1, tool: 'agent-reach', toolCommand: 'search-youtube' };
+  }
+  if (/bilibili|b站|哔哩哔哩/i.test(task)) {
+    return { type: 'search', platform: 'bilibili', priority: 1, tool: 'agent-reach', toolCommand: 'search-bilibili' };
+  }
+  if (/github|git.*hub/i.test(task)) {
+    return { type: 'search', platform: 'github', priority: 1, tool: 'agent-reach', toolCommand: 'search-github' };
+  }
+  
+  // Priority 2: MCP Search
+  if (/搜索|查找|search|find|query|查.*信息/i.test(lowerTask)) {
+    return { type: 'search', platform: 'web', priority: 2, tool: 'mcp-search' };
+  }
+  
+  // Priority 3: Browser
+  return { type: 'unknown', platform: 'web', priority: 3, tool: 'browser' };
+}
+
+/**
+ * 提取搜索关键词
+ */
+function extractKeywords(task) {
+  // 简单提取：去除常见动词和平台名，保留核心名词
+  return task
+    .replace(/搜索|查找|关于|的|信息|内容/g, '')
+    .replace(/小红书|twitter|instagram|youtube|bilibili|github/gi, '')
+    .trim() || '相关';
 }
 
 /**
