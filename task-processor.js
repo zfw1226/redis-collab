@@ -442,7 +442,7 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
   // Execute task using Sub-Agent Orchestrator
   const executeFn = async (t) => {
     // Import sub-agent orchestrator
-    const { spawnSubAgent } = await import('./sub-agent-orchestrator.js');
+    const { spawnSubAgent, checkSubAgentResult } = await import('./sub-agent-orchestrator.js');
     
     console.log(`[Task] Spawning sub-agent for task: ${taskData.id}`);
     console.log(`[Task] Task content: ${t.substring(0, 80)}...`);
@@ -457,12 +457,33 @@ async function processTask(task, taskData, redis, sendNotificationFn) {
     console.log(`[Task] Sub-agent spawn request created: ${spawnResult.taskDir}`);
     console.log(`[Task] Waiting for sub-agent to complete...`);
     
-    // Return a placeholder - actual result will come from the sub-agent execution
-    return {
-      result: `任务已提交执行: ${t.substring(0, 50)}...`,
-      status: 'processing',
-      tools_used: ['sub-agent']
-    };
+    // 等待 sub-agent 执行完成
+    const maxWait = 30 * 60 * 1000; // 30分钟超时
+    const startTime = Date.now();
+    const checkInterval = 5000; // 每5秒检查一次
+    
+    while (Date.now() - startTime < maxWait) {
+      const result = await checkSubAgentResult(taskData, redis);
+      
+      if (result.success) {
+        console.log(`[Task] Sub-agent completed successfully`);
+        return {
+          result: result.result,
+          status: 'completed',
+          tools_used: result.tools || ['sub-agent']
+        };
+      }
+      
+      if (result.status === 'failed' || result.error) {
+        throw new Error(result.error || 'Sub-agent execution failed');
+      }
+      
+      // 继续等待
+      console.log(`[Task] Still waiting...`);
+      await new Promise(r => setTimeout(r, checkInterval));
+    }
+    
+    throw new Error('Sub-agent execution timeout (30 minutes)');
   };
   
   const result = await executeTaskWithRetry(task, config, executeFn);

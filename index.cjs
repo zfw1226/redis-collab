@@ -264,8 +264,14 @@ async function releaseLock(resource, owner) {
 async function sendTask(to, task, priority) {
   priority = priority || 'normal';
   const id = crypto.randomBytes(4).toString('hex');
-  const taskData = JSON.stringify({ id, from: AGENT_NAME, to, task, priority, timestamp: new Date(new Date().getTime() + 8*3600000).toISOString(), status: 'pending', attempts: 0, result: null });
-  await redisCmd('RPUSH', 'tasks:' + to, taskData);
+  const taskData = { id, from: AGENT_NAME, to, task, priority, timestamp: new Date(new Date().getTime() + 8*3600000).toISOString(), status: 'pending', attempts: 0, result: null };
+  
+  // 1. Add to queue (persistence)
+  await redisCmd('RPUSH', 'tasks:' + to, JSON.stringify(taskData));
+  
+  // 2. Publish Pub/Sub notification (real-time)
+  await publishMessage(`new-task:${to}`, taskData);
+  
   await logEvent('task_sent', { id, to, task: task.substring(0, 50) });
   return '✅ Task to ' + to + ': ' + task + '\nID: ' + id + '\nPriority: ' + priority;
 }
