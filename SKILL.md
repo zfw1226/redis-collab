@@ -48,6 +48,13 @@ docker run -d --name redis \
 
 ### 2. Configure Environment Variables
 
+### 3. Install Dependencies
+
+```bash
+npm install
+```
+
+
 ```bash
 # Required
 export REDIS_HOST="your-redis-ip"
@@ -69,7 +76,7 @@ AGENT_NAME=机器A
 HEARTBEAT_INTERVAL=30
 ```
 
-### 3. Install Skill
+### 4. Install Skill
 
 ```bash
 cp -r redis-collab /root/.openclaw/workspace/skills/
