@@ -87,7 +87,7 @@ async function listPendingTasks() {
   
   if (pendingDispatches.length > 0) {
     console.log(`📋 Tasks waiting for sub-agent dispatch:`);
-    pendingDispatches.forEach((t, i) = {
+    pendingDispatches.forEach((t, i) => {
       console.log(`\n${i + 1}. Task ID: ${t.id}`);
       console.log(`   From: ${t.from}`);
       console.log(`   Task: ${t.task}...`);

@@ -54,8 +54,18 @@ function checkTaskPermission(taskType, config) {
   const whitelist = config.WHITELIST || [];
   const blacklist = config.BLACKLIST || [];
   
+  // Helper to get pattern string from various formats
+  const getPattern = (item) => {
+    if (typeof item === 'string') return item;
+    if (typeof item === 'object' && item !== null) {
+      return Object.keys(item)[0];
+    }
+    return String(item);
+  };
+  
   // Check blacklist first
-  for (const pattern of blacklist) {
+  for (const item of blacklist) {
+    const pattern = getPattern(item);
     const cleanPattern = pattern.replace('*', '');
     if (taskType.startsWith(cleanPattern) || pattern === '*') {
       return { allowed: false, reason: '黑名单任务类型', pattern };
@@ -63,7 +73,8 @@ function checkTaskPermission(taskType, config) {
   }
   
   // Check whitelist
-  for (const pattern of whitelist) {
+  for (const item of whitelist) {
+    const pattern = getPattern(item);
     const cleanPattern = pattern.replace('*', '');
     if (taskType.startsWith(cleanPattern) || pattern === '*') {
       return { allowed: true, pattern };
